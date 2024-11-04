@@ -58,7 +58,8 @@
     filter_p/2,
     filter_ps/2,
     filter_r/2,
-    filter_s/2
+    filter_s/2,
+    filter_t/2
 ]).
 
 -compile([
@@ -69,6 +70,7 @@
 
 -type f_action() :: log | stop.
 -type f_result() :: logger:filter_return().
+-type f_type() :: backend|aae|metric.
 
 %% ===================================================================
 %% Filters
@@ -191,6 +193,23 @@ filter_s(#{meta := #{domain := [otp, sasl | _]}} = Event, Action) ->
     filter_match(Event, Action);
 filter_s(_Event, _Action) ->
     ignore.
+
+-spec filter_t(
+    Event :: logger:log_event(),
+    {Action :: f_action(), Tags :: list(f_type())})
+        -> f_result().
+%% @doc Filter out logs with specific log_types, e.g. such as the backend log
+%% type used in leveled
+filter_t(#{meta := #{log_type := LogType}} = Event, {Action, LogTypes}) ->
+    case lists:member(LogType, LogTypes) of
+        true ->
+            filter_match(Event, Action);
+        false ->
+            ignore
+    end;
+filter_t(_Event, {_Action, _LogTypes}) ->
+    ignore.
+    
 
 %% ===================================================================
 %% Internal
