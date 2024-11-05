@@ -46,6 +46,10 @@
 %%
 -module(riak_logger).
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 % Filters
 -export([
     filter_c/2,
@@ -61,6 +65,8 @@
     filter_s/2,
     filter_t/2
 ]).
+
+-export([riak_handler_generator/2]).
 
 -compile([
     inline,
@@ -196,7 +202,7 @@ filter_s(_Event, _Action) ->
 
 -spec filter_t(
     Event :: logger:log_event(),
-    {Action :: f_action(), Tags :: list(f_type())})
+    {Action :: f_action(), LogTypes :: list(f_type())})
         -> f_result().
 %% @doc Filter out logs with specific log_types, e.g. such as the backend log
 %% type used in leveled
@@ -221,3 +227,292 @@ filter_match(Event, log) ->
     Event;
 filter_match(_Event, Action) ->
     Action.
+
+%% ===================================================================
+%% Riak Cuttlefish configuration parser
+%% ===================================================================
+
+-spec riak_handler_generator(any(), fun((string(), any()) -> any())) -> list().
+riak_handler_generator(Conf, ConfFetchFun) ->
+    ConsoleFile = ConfFetchFun("logger.file", Conf),
+    ErrorFile = ConfFetchFun("error.file", Conf),
+    CrashFile = ConfFetchFun("crash.file", Conf),
+    ReportFile = ConfFetchFun("report.file", Conf),
+    BackendFile = ConfFetchFun("backend.file", Conf),
+    TictacaaeFile = ConfFetchFun("tictacaae.file", Conf),
+    MetricFile = ConfFetchFun("metric.file", Conf),
+
+    StdTemplate =
+        [
+            time, " [", level, "] ", {pid, [pid, "@"], []},
+            {mfa, [mfa, ":"], []}, {line, [line, ":"], []}, " ", msg, "\n"
+        ],
+    LeveledTemplate =
+        [time, " [", level, "] ", msg, "\n"],
+    
+    CheckPolicyFun =
+        fun(PolicyConfName, PolicyType) ->
+            case ConfFetchFun(PolicyConfName, Conf) of
+                BP when BP =/= local ->
+                    [PolicyType];
+                _ ->
+                    []
+            end
+        end,
+
+    P0 = CheckPolicyFun("backend.policy", backend),
+    P1 = CheckPolicyFun("tictacaae.policy", tictacaae),
+    P2 = CheckPolicyFun("metric.policy", metric),
+    FilteredTypes = P0 ++ P1 ++ P2,
+
+    DefaultCfgMap =
+      #{
+        file_check => 100,
+        max_no_bytes => ConfFetchFun("logger.max_file_size", Conf),
+        max_no_files => ConfFetchFun("logger.max_files", Conf)
+      },
+
+    StandardHandler =
+        {
+            handler, default, logger_std_h,
+            #{
+                level => all,
+                config => maps:put(file, ConsoleFile, DefaultCfgMap),
+                filter_default => log,
+                filters => 
+                    case FilteredTypes of
+                        [] ->
+                            [{default_filter, {fun filter_ces/2, stop}}];
+                        _ ->
+                            [
+                                {
+                                    type_filter,
+                                    {fun filter_t/2, {stop, FilteredTypes}}
+                                },
+                                {default_filter, {fun filter_ces/2, stop}}
+                            ]
+                    end,
+                formatter =>
+                    {logger_formatter,
+                        #{
+                            legacy_header => false,
+                            single_line => true,
+                            time_designator => $\s,
+                            template => StdTemplate
+                        }
+                    }
+            }
+        },
+    
+    ErrorHandler =
+        %% Records all events at 'error' level or higher
+        {
+            handler, error_log, logger_std_h,
+            #{
+                level => error,
+                config => maps:put(file, ErrorFile, DefaultCfgMap),
+                filter_default => log,
+                filters => [],
+                formatter =>
+                    {logger_formatter,
+                        #{
+                            legacy_header => false,
+                            single_line => true,
+                            time_designator => $\s,
+                            template => StdTemplate
+                        }
+                    }
+                }
+        },
+
+    CrashHandler =
+        %% Records process crashes
+        {
+            handler, crash_log, logger_std_h,
+            #{
+                level => all,
+                config => maps:put(file, CrashFile, DefaultCfgMap),
+                filter_default => stop,
+                filters => [{crash_filter, {fun filter_ce/2, log}}],
+                formatter =>
+                    {
+                        logger_formatter,
+                        #{
+                            legacy_header => false,
+                            single_line => false,
+                            time_designator => $\s,
+                            template => StdTemplate
+                        }
+                    }
+            }
+        },
+
+    ReportHandler =
+        %% Records progress and SASL reports
+        {
+            handler, report_log, logger_std_h,
+            #{
+                level => info,
+                config => maps:put(file, ReportFile, DefaultCfgMap),
+                filter_default => stop,
+                filters => [{report_filter, {fun filter_ps/2, log}}],
+                formatter =>
+                    {
+                        logger_formatter,
+                        #{
+                            legacy_header => false,
+                            single_line => false,
+                            time_designator => $\s,
+                            template =>  StdTemplate
+                        }
+                    }
+            }
+        },
+    
+    BackendHandler =
+        case ConfFetchFun("backend.policy", Conf) of
+            divert ->
+                {
+                    handler, backend_log, logger_std_h,
+                    #{
+                        level => all,
+                        config => maps:put(file, BackendFile, DefaultCfgMap),
+                        filter_default => stop,
+                        filters =>
+                        [{type_filter, {fun filter_t/2, {log, [backend]}}}],
+                        formatter =>
+                            {
+                                logger_formatter,
+                                #{
+                                    legacy_header => false,
+                                    single_line => true,
+                                    time_designator => $\s,
+                                    template => LeveledTemplate
+                                }
+                            }
+                    }
+                };
+            _ ->
+                none
+        end,
+
+    TictacaaeHandler =
+        case ConfFetchFun("tictacaae.policy", Conf) of
+            divert ->
+                {
+                    handler, tictacaae_log, logger_std_h,
+                    #{
+                        level => all,
+                        config => maps:put(file, TictacaaeFile, DefaultCfgMap),
+                        filter_default => stop,
+                        filters =>
+                            [
+                                {
+                                    type_filter,
+                                    {fun filter_t/2, {log, [tictacaae]}}
+                                }
+                            ],
+                        formatter =>
+                            {
+                                logger_formatter,
+                                #{
+                                    legacy_header => false,
+                                    single_line => true,
+                                    time_designator => $\s,
+                                    template => LeveledTemplate
+                                }
+                            }
+                        }
+                };
+            _ ->
+                none
+      end,
+    
+    MetricHandler =
+        case ConfFetchFun("metric.policy", Conf) of
+            divert ->
+                {
+                    handler, metric_log, logger_std_h,
+                    #{
+                        level => all,
+                        config => maps:put(file, MetricFile, DefaultCfgMap),
+                        filter_default => stop,
+                        filters =>
+                            [{type_filter, {fun filter_t/2, {log, [metric]}}}],
+                    formatter =>
+                        {
+                            logger_formatter,
+                            #{
+                                legacy_header => false,
+                                single_line => true,
+                                time_designator => $\s,
+                                template => StdTemplate
+                            }
+                        }
+                    }
+                };
+            _ ->
+                none
+        end,
+    lists:filter(
+    fun(H) -> H =/= none end,
+        [
+            StandardHandler, ErrorHandler, CrashHandler, ReportHandler,
+            BackendHandler, TictacaaeHandler, MetricHandler
+        ]
+    ).
+
+%% ===================================================================
+%% Tests
+%% ===================================================================
+
+-ifdef(TEST).
+
+wday_handler_test() ->
+    StdConfig =
+        #{
+            "logger.file" => "$(platform_log_dir)/console.log",
+            "error.file" => "$(platform_log_dir)/error.log",
+            "crash.file" => "$(platform_log_dir)/crash.log",
+            "report.file" => "$(platform_log_dir)/report.log",
+            "backend.file" => "$(platform_log_dir)/backend.log",
+            "tictacaae.file" => "$(platform_log_dir)/tictacaae.log",
+            "metric.file" => "$(platform_log_dir)/metric.log",
+            "logger.max_file_size" => 1000000,
+            "logger.max_files" => 10,
+            "backend.policy" => local,
+            "tictacaae.policy" => local,
+            "metric.policy" => local
+        },
+    
+    HandlerList =
+        riak_handler_generator(StdConfig, fun maps:get/2),
+    io:format(user, "~nWday config:~n~p~n", [HandlerList]),
+    true = erlang:is_list(HandlerList),
+    true = 4 == erlang:length(HandlerList).
+
+nhs_handler_test() ->
+    StdConfig =
+        #{
+            "logger.file" => "$(platform_log_dir)/console.log",
+            "error.file" => "$(platform_log_dir)/error.log",
+            "crash.file" => "$(platform_log_dir)/crash.log",
+            "report.file" => "$(platform_log_dir)/report.log",
+            "backend.file" => "$(platform_log_dir)/backend.log",
+            "tictacaae.file" => "$(platform_log_dir)/tictacaae.log",
+            "metric.file" => "$(platform_log_dir)/metric.log",
+            "logger.max_file_size" => 1000000,
+            "logger.max_files" => 10,
+            "backend.policy" => divert,
+            "tictacaae.policy" => divert,
+            "metric.policy" => divert
+        },
+    
+    HandlerList =
+        riak_handler_generator(StdConfig, fun maps:get/2),
+    io:format(user, "~nNHS config:~n~p~n", [HandlerList]),
+    true = erlang:is_list(HandlerList),
+    true = 7 == erlang:length(HandlerList).
+    
+
+-endif.
