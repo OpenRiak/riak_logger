@@ -282,14 +282,24 @@ riak_handler_generator(Conf, ConfFetchFun) ->
                 filters => 
                     case FilteredTypes of
                         [] ->
-                            [{default_filter, {fun filter_ces/2, stop}}];
+                            [
+                                {
+                                    default_filter,
+                                    {fun riak_logger:filter_ces/2, stop}
+                                }
+                            ];
                         _ ->
                             [
                                 {
                                     type_filter,
-                                    {fun filter_t/2, {stop, FilteredTypes}}
+                                    {
+                                        fun riak_logger:filter_t/2,
+                                        {stop, FilteredTypes}
+                                    }
                                 },
-                                {default_filter, {fun filter_ces/2, stop}}
+                                {
+                                    default_filter,
+                                    {fun riak_logger:filter_ces/2, stop}}
                             ]
                     end,
                 formatter =>
@@ -333,7 +343,8 @@ riak_handler_generator(Conf, ConfFetchFun) ->
                 level => all,
                 config => maps:put(file, CrashFile, DefaultCfgMap),
                 filter_default => stop,
-                filters => [{crash_filter, {fun filter_ce/2, log}}],
+                filters =>
+                    [{crash_filter, {fun riak_logger:filter_ce/2, log}}],
                 formatter =>
                     {
                         logger_formatter,
@@ -355,7 +366,8 @@ riak_handler_generator(Conf, ConfFetchFun) ->
                 level => info,
                 config => maps:put(file, ReportFile, DefaultCfgMap),
                 filter_default => stop,
-                filters => [{report_filter, {fun filter_ps/2, log}}],
+                filters =>
+                    [{report_filter, {fun riak_looger:filter_ps/2, log}}],
                 formatter =>
                     {
                         logger_formatter,
@@ -379,7 +391,15 @@ riak_handler_generator(Conf, ConfFetchFun) ->
                         config => maps:put(file, BackendFile, DefaultCfgMap),
                         filter_default => stop,
                         filters =>
-                        [{type_filter, {fun filter_t/2, {log, [backend]}}}],
+                            [
+                                {
+                                    type_filter,
+                                    {
+                                        fun riak_logger:filter_t/2,
+                                        {log, [backend]}
+                                    }
+                                }
+                            ],
                         formatter =>
                             {
                                 logger_formatter,
@@ -409,7 +429,10 @@ riak_handler_generator(Conf, ConfFetchFun) ->
                             [
                                 {
                                     type_filter,
-                                    {fun filter_t/2, {log, [tictacaae]}}
+                                    {
+                                        fun riak_logger:filter_t/2,
+                                        {log, [tictacaae]}
+                                    }
                                 }
                             ],
                         formatter =>
@@ -438,7 +461,15 @@ riak_handler_generator(Conf, ConfFetchFun) ->
                         config => maps:put(file, MetricFile, DefaultCfgMap),
                         filter_default => stop,
                         filters =>
-                            [{type_filter, {fun filter_t/2, {log, [metric]}}}],
+                            [
+                                {
+                                    type_filter,
+                                    {
+                                        fun riak_logger:filter_t/2,
+                                        {log, [metric]}
+                                    }
+                                }
+                            ],
                     formatter =>
                         {
                             logger_formatter,
