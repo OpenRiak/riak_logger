@@ -367,7 +367,7 @@ riak_handler_generator(Conf, ConfFetchFun) ->
                 config => maps:put(file, ReportFile, DefaultCfgMap),
                 filter_default => stop,
                 filters =>
-                    [{report_filter, {fun riak_looger:filter_ps/2, log}}],
+                    [{report_filter, {fun riak_logger:filter_ps/2, log}}],
                 formatter =>
                     {
                         logger_formatter,
