@@ -1,0 +1,247 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>Module riak_log_json_formatter</title>
+<link rel="stylesheet" type="text/css" href="stylesheet.css" title="EDoc">
+</head>
+<body bgcolor="white">
+<div class="navbar"><a name="#navbar_top"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<hr>
+
+<h1>Module riak_log_json_formatter</h1>
+<ul class="index"><li><a href="#description">Description</a></li><li><a href="#types">Data Types</a></li><li><a href="#index">Function Index</a></li><li><a href="#functions">Function Details</a></li></ul>A JSON formatter for the Kernel Logger.
+
+
+<h2><a name="description">Description</a></h2><p>A JSON formatter for the Kernel Logger.</p>
+ 
+  See the <a href="https://www.erlang.org/doc/apps/kernel/logger_chapter#handlers">Handlers</a> and <a href="https://www.erlang.org/doc/apps/kernel/logger_chapter.html#formatters">Formatters</a> sections of the Kernel User's Guide for more information.
+ 
+<h2><a name="types">Data Types</a></h2>
+
+<h3 class="typedecl"><a name="type-config">config()</a></h3>
+<p><tt>config() = #{chars_limit =&gt; pos_integer(), depth =&gt; pos_integer(), field_map =&gt; <a href="#type-field_map">field_map()</a>, level_map =&gt; <a href="#type-level_map">level_map()</a>, meta_filter =&gt; <a href="#type-meta_filter">meta_filter()</a>, mfa_format =&gt; <a href="#type-mfa_format">mfa_format()</a>, report_cb =&gt; <a href="#type-report_cb">report_cb()</a>, time_delim =&gt; <a href="#type-time_delim">time_delim()</a>, time_offset =&gt; <a href="#type-time_offset">time_offset()</a>, time_unit =&gt; <a href="#type-time_unit">time_unit()</a>}</tt></p>
+<p>  The configuration term for <code>riak_log_json_formatter</code> is a <a href="https://www.erlang.org/doc/apps/erts/erlang#t:map/0"><code>map()</code></a>
+  with the following keys:<dl>
+  <dt><code>chars_limit ::</code> <a href="https://www.erlang.org/doc/apps/erts/erlang#t:pos_integer/0"><code>pos_integer()</code></a></dt>
+  <dd>The value of the option with the same name to be used when calling
+  <a href="https://www.erlang.org/doc/apps/stdlib/io_lib.html#format/3"><code>io_lib:format/3</code></a> to format the <code>message</code>. This value limits the
+  total number of characters printed for each log event's <code>message</code> field
+  - the overall line containing the full JSON object may be considerably
+  longer, based on included metadata. Note that this is a soft limit; no
+  hard limit is available.<br>
+  There is no default limit on message length.</dd>
+  <dt><code>depth ::</code> <a href="https://www.erlang.org/doc/apps/erts/erlang#t:pos_integer/0"><code>pos_integer()</code></a></dt>
+  <dd>The maximum depth of nested terms included in the <code>message</code> field.
+  <code>"~p"</code> and <code>"~w"</code> format controls are rewritten as <code>"~P"</code> and <code>"~W"</code>,
+  respectively, using this value as the depth parameter. See <a href="https://www.erlang.org/doc/apps/stdlib/io.html#fwrite/3"><code>io:fwrite/3</code></a> for details.<br>
+  There is no default limit on depth.</dd>
+  <dt><code>field_map ::</code> <a docgen-rel="seetype" docgen-href="#field_map/0" href="#type-field_map"><code>field_map()</code></a></dt>
+  <dd>A map of [alternate] names to be output for JSON fields, possibly
+  overriding the defaults returned by <a docgen-rel="seetype" docgen-href="#default_fields/0" href="#type-default_fields"><code>default_fields()</code></a>.<br>
+  Any top-level field name can be overridden, not just the predefined ones,
+  but nested field names are not affected. For instance, if an event contains
+  field <code>foo</code>, in either its metadata or a report map, it can be mapped to
+  <code>bar</code> in the output.<br>
+  The map need not include every field, only those to be overridden.</dd>
+  <dt><code>level_map ::</code> <a docgen-rel="seetype" docgen-href="#level_map/0" href="#type-level_map"><code>level_map()</code></a></dt>
+  <dd>A map of [alternate] levels or values to be output for the JSON <code>level</code>
+  field, overriding the defaults returned by <a docgen-rel="seetype" docgen-href="#default_level_map/0" href="#type-default_level_map"><code>default_level_map()</code></a>.<br>
+  The map need not include every level, only those to be overridden.</dd>
+  <dt><code>meta_filter ::</code> <a docgen-rel="seetype" docgen-href="#meta_filter/0" href="#type-meta_filter"><code>meta_filter()</code></a></dt>
+  <dd>Indicates what metadata fields to include in JSON output.<br>
+  The default behavior is to output all fields, as if the <code>all</code> value was
+  specified.<br>
+  Note that this filtering is applied <i>before</i> any field name mapping
+  specified by the <code>field_map</code> configuration, if present, and applies
+  <i>only</i> to top-level fields; nested fields are not evaluated.</dd>
+  <dt><code>mfa_format ::</code> <a docgen-rel="seetype" docgen-href="#mfa_format/0" href="#type-mfa_format"><code>mfa_format()</code></a></dt>
+  <dd>The level of verbosity of MFA information included in JSON output.<br>
+  The default is <code>compact</code>.</dd>
+  <dt><code>report_cb ::</code> <a href="https://www.erlang.org/doc/apps/kernel/logger#t:report_cb/0"><code>logger:report_cb()</code></a></dt>
+  <dd>Specification of this element is <i>NOT</i> recommended, as its behavior
+  is likely to change.<br>
+  The default behavior is to output each field separately in the JSON.</dd>
+  <dt><code>time_delim ::</code> <a docgen-rel="seetype" docgen-href="#time_delim/0" href="#type-time_delim"><code>time_delim()</code></a></dt>
+  <dd>A printable Latin1 character used to delimit the date and time portions
+  of the <a href="https://datatracker.ietf.org/doc/html/rfc3339">RFC-3339</a>
+  timestamp.<br>
+  Defaults to <code>$T</code>.</dd>
+  <dt><code>time_offset ::</code> <a docgen-rel="seetype" docgen-href="#time_offset/0" href="#type-time_offset"><code>time_offset()</code></a></dt>
+  <dd>The time offset to be used when formatting the timestamp.
+  Refer to the datatype for details.<br>
+  Defaults to <code>"Z"</code>.</dd>
+  <dt><code>time_unit ::</code> <a docgen-rel="seetype" docgen-href="#time_unit/0" href="#type-time_unit"><code>time_unit()</code></a></dt>
+  <dd>The resolution of the seconds portion of the timestamp.<br>
+  Defaults to <code>millisecond</code>.</dd>
+  </dl>
+  All keys are optional, but configuration <i>MUST</i> be specified as a map,
+  even if empty. Default values are used for any missing keys.</p>
+
+<h3 class="typedecl"><a name="type-field_map">field_map()</a></h3>
+<p><tt>field_map() = #{atom() =&gt; atom()}</tt></p>
+<p>  A (possibly sparse) map of alternate field names to be output to the JSON.
+  Name mapping is only applied to top-level fields; nested field names are
+  not evaluated for mapping.</p>
+
+<h3 class="typedecl"><a name="type-level_map">level_map()</a></h3>
+<p><tt>level_map() = #{<a href="#type-log_level">log_level()</a> =&gt; <a href="#type-log_level">log_level()</a> | <a href="#type-level_val">level_val()</a>}</tt></p>
+<p>  A (possibly sparse) map of alternate levels or values to be output for the
+  JSON <code>level</code> field. The keys of the map can only be established log levels;
+  the associated values can be either another level atom, which is resolved
+  recursively, or a binary string to be output to the JSON result.</p>
+
+<h3 class="typedecl"><a name="type-level_val">level_val()</a></h3>
+<p><tt>level_val() = <a href="https://www.erlang.org/doc/apps/stdlib/unicode.html#t:unicode_binary/0">unicode:unicode_binary()</a></tt></p>
+<p>  The string to be included in JSON output representing a <a docgen-rel="seetype" docgen-href="#log_level/0" href="#type-log_level"><code>log_level()</code></a>.
+  The value <i>MUST</i> be a non-empty <a href="https://www.erlang.org/doc/apps/stdlib/unicode.html#t:unicode_binary/0">unicode binary string</a> that does not require any characters to be
+  escaped.</p>
+
+<h3 class="typedecl"><a name="type-log_level">log_level()</a></h3>
+<p><tt>log_level() = <a href="https://www.erlang.org/doc/apps/kernel/logger.html#t:level/0">logger:level()</a></tt></p>
+<p>  One of the predefined constant logging <a href="https://www.erlang.org/doc/apps/kernel/logger.html#t:level/0">levels</a>.</p>
+
+<h3 class="typedecl"><a name="type-meta_field">meta_field()</a></h3>
+<p><tt>meta_field() = domain | file | gl | line | mfa | ospid | proc | time</tt></p>
+<p><p>  Predefined metadata field tags.</p>
+ 
+  Some of these are provided at the point at which the log event is generated,
+  others are derived by the formatter.<dl>
+  <dt><code>domain</code></dt><dd>The event's originating domain (functional area), which
+  must be explicitly specified as metadata when the event is generated.</dd>
+  <dt><code>file</code></dt><dd>The source file generating the log event,
+  provided by the LOG_xxx macros.<br>
+  The file's path is shortened to the file name with two levels of
+  encompassing directories.</dd>
+  <dt><code>gl</code></dt><dd>The group leader of the process originating the event,
+  provided by the <code>logger</code> module.</dd>
+  <dt><code>line</code></dt><dd>The line at which the event is generated,
+  provided by the LOG_xxx macros.</dd>
+  <dt><code>mfa</code></dt><dd>The Module, Function, and Arity from which the event is
+  generated, provided by the LOG_xxx macros.</dd>
+  <dt><code>ospid</code></dt><dd>The OS PID of the ERTS process,
+  obtained by the formatter.</dd>
+  <dt><code>proc</code></dt><dd>The Erlang PID of the process generating the event,
+  provided by the <code>logger</code> module as the <code>pid</code> metadata field.</dd>
+  <dt><code>time</code></dt><dd>The time at which the event occurred.<br>
+  Normally calculated as the time the event entered the <code>logger</code> module, but
+  <i>CAN</i> be specified at the point of generation (as the value received
+  from <code>os:system_time(microsecond)</code>, or equivalent microsecond timestamp)
+  for potentially more precise recording.</dd>
+  </dl>
+  Additional fields <i>CAN</i> be specified, but receive no special handling
+  and are included "as-is" when present in the event's metadata (subject to
+  filtering).</p>
+
+<h3 class="typedecl"><a name="type-meta_fields">meta_fields()</a></h3>
+<p><tt>meta_fields() = [<a href="#type-meta_field">meta_field()</a> | atom(), ...]</tt></p>
+<p>  A non-empty list of metadata field keys.
+  The list <i>MAY</i> contain arbitrary fields (as atoms) included at the
+  point of event generation.</p>
+
+<h3 class="typedecl"><a name="type-meta_filter">meta_filter()</a></h3>
+<p><tt>meta_filter() = all | none | {include | exclude, <a href="#type-meta_fields">meta_fields()</a>}</tt></p>
+<p><p>  Indicates what metadata fields to include in, or exclude from, JSON output.</p>
+ 
+  Accepted values are:<dl>
+  <dt><code>all</code></dt><dd>All specified and derived metadata fields are included
+  in the JSON output. This is the default behavior if the <code>meta_filter</code>
+  configuration key is not specified.</dd>
+  <dt><code>none</code></dt>
+  <dd>No metadata fields are included in the JSON output.</dd>
+  <dt><code>{include,</code> <a docgen-rel="seetype" docgen-href="#meta_fields/0" href="#type-meta_fields"><code>meta_fields()</code></a><code>}</code></dt>
+  <dd>An explicit list specifying the <i>ONLY</i> fields that will be included
+  in the output. All non-matching fields will be excluded.</dd>
+  <dt><code>{exclude,</code> <a docgen-rel="seetype" docgen-href="#meta_fields/0" href="#type-meta_fields"><code>meta_fields()</code></a><code>}</code></dt>
+  <dd>An explicit list specifying fields that will be excluded from the
+  output. All non-matching fields will be included.</dd>
+  </dl><ul>
+  <li>Empty inclusion/exclusion lists are equivalent to, but less efficient
+  than, <code>none</code> or <code>all</code>, respectively. Their use should be avoided.</li>
+  <li>Note that use of the <code>include</code> filter can have unexpected consequences
+  as new log generation statements are added to the system that may contain
+  previously unused metadata tags that will be silently excluded.</li>
+  </ul></p>
+
+<h3 class="typedecl"><a name="type-mfa_format">mfa_format()</a></h3>
+<p><tt>mfa_format() = compact | expand | all</tt></p>
+<p>  <dl>
+  <dt><code>compact</code></dt><dd>Outputs <code>"mfa":"M:F/A"</code></dd>
+  <dt><code>expand</code></dt><dd>Outputs <code>"module":"M","function":"F","arity":A</code></dd>
+  <dt><code>all</code></dt><dd>Outputs all of the above.</dd>
+  </dl></p>
+
+<h3 class="typedecl"><a name="type-report_cb">report_cb()</a></h3>
+<p><tt>report_cb() = <a href="https://www.erlang.org/doc/apps/kernel/logger#t:report_cb/0">logger:report_cb()</a></tt></p>
+<p>  See <a href="https://www.erlang.org/doc/apps/kernel/logger#t:report_cb/0">logger:report_cb()</a>.</p>
+
+<h3 class="typedecl"><a name="type-time_delim">time_delim()</a></h3>
+<p><tt>time_delim() = 32..126 | 160..255</tt></p>
+<p>  Printable Latin1 character.</p>
+
+<h3 class="typedecl"><a name="type-time_offset">time_offset()</a></h3>
+<p><tt>time_offset() = [] | [90] | [122] | -720..840</tt></p>
+<p>  Offset from UTC. May be specified as a string or integer, where:<dl>
+  <dt><code>""</code></dt><dd>Denotes local time.</dd>
+  <dt><code>"Z"</code> or <code>"z"</code></dt><dd>Denotes UTC with that suffix.</dd>
+  <dt><code>0</code></dt><dd>Denotes UTC with suffix <code>"Z"</code>.</dd>
+  <dt>integer</dt><dd>Denotes the offset, in minutes, in the range
+  +14h (LINT) through -12h (ILDW), with suffix <code>"±hh:mm"</code>.</dd>
+  </dl></p>
+
+<h3 class="typedecl"><a name="type-time_unit">time_unit()</a></h3>
+<p><tt>time_unit() = second | millisecond | microsecond</tt></p>
+<p>  Timestamp resolution.</p>
+
+<h2><a name="index">Function Index</a></h2>
+<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#check_config-1">check_config/1</a></td><td>Validates a configuration map.</td></tr>
+<tr><td valign="top"><a href="#default_config-0">default_config/0</a></td><td>Returns the <a docgen-rel="seetype" docgen-href="#config/0" href="#type-config">configuration</a> defaults.</td></tr>
+<tr><td valign="top"><a href="#default_field_map-0">default_field_map/0</a></td><td>Returns the default <a docgen-rel="seetype" docgen-href="#field_map/0" href="#type-field_map"><code>field_map()</code></a>.</td></tr>
+<tr><td valign="top"><a href="#default_fields-0">default_fields/0</a></td><td>Returns the default fields that may be in a JSON output object.</td></tr>
+<tr><td valign="top"><a href="#default_level_map-0">default_level_map/0</a></td><td>Returns the default <a docgen-rel="seetype" docgen-href="#level_map/0" href="#type-level_map"><code>level_map()</code></a>.</td></tr>
+<tr><td valign="top"><a href="#format-2">format/2</a></td><td>Formats a log event as a JSON object on a single line.</td></tr>
+</table>
+
+<h2><a name="functions">Function Details</a></h2>
+
+<h3 class="function"><a name="check_config-1">check_config/1</a></h3>
+<div class="spec">
+<p><tt>check_config(FConfig::<a href="https://www.erlang.org/doc/apps/kernel/logger.html#t:formatter_config/0">logger:formatter_config()</a>) -&gt; ok | {error, term()}</tt><br></p>
+<p> </p>
+</div><p>Validates a configuration map.</p>
+
+<h3 class="function"><a name="default_config-0">default_config/0</a></h3>
+<div class="spec">
+<p><tt>default_config() -&gt; <a href="#type-config">config()</a></tt><br></p>
+<p> </p>
+</div><p>Returns the <a docgen-rel="seetype" docgen-href="#config/0" href="#type-config">configuration</a> defaults.</p>
+
+<h3 class="function"><a name="default_field_map-0">default_field_map/0</a></h3>
+<div class="spec">
+<p><tt>default_field_map() -&gt; <a href="#type-field_map">field_map()</a></tt><br></p>
+<p> </p>
+</div><p>Returns the default <a docgen-rel="seetype" docgen-href="#field_map/0" href="#type-field_map"><code>field_map()</code></a>.</p>
+
+<h3 class="function"><a name="default_fields-0">default_fields/0</a></h3>
+<div class="spec">
+<p><tt>default_fields() -&gt; [atom(), ...]</tt><br></p>
+<p> </p>
+</div><p>Returns the default fields that may be in a JSON output object.</p>
+
+<h3 class="function"><a name="default_level_map-0">default_level_map/0</a></h3>
+<div class="spec">
+<p><tt>default_level_map() -&gt; <a href="#type-level_map">level_map()</a></tt><br></p>
+<p> </p>
+</div><p>Returns the default <a docgen-rel="seetype" docgen-href="#level_map/0" href="#type-level_map"><code>level_map()</code></a>.</p>
+
+<h3 class="function"><a name="format-2">format/2</a></h3>
+<div class="spec">
+<p><tt>format(Event::<a href="https://www.erlang.org/doc/apps/kernel/logger.html#t:log_event/0">logger:log_event()</a>, FConfig::<a href="#type-config">config()</a>) -&gt; <a href="https://www.erlang.org/doc/apps/stdlib/unicode.html#t:chardata/0">unicode:chardata()</a></tt><br></p>
+<p> </p>
+</div><p>Formats a log event as a JSON object on a single line.</p>
+<hr>
+
+<div class="navbar"><a name="#navbar_bottom"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<p><i>Generated by EDoc</i></p>
+</body>
+</html>
