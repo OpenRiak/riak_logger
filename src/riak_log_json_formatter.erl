@@ -46,13 +46,19 @@
 %% Public Types
 -export_type([
     config/0,
+    event_field/0,
+    field_filter/0,
     field_map/0,
     level_map/0,
     level_val/0,
+    line_delim/0,
     log_level/0,
     meta_field/0,
-    meta_filter/0,
+    meta_fields/0,
     mfa_format/0,
+    output_field/0,
+    output_fields/0,
+    report_cb/0,
     time_delim/0,
     time_offset/0,
     time_unit/0
@@ -78,17 +84,22 @@
 -compile([warn_missing_spec_all]).
 -endif.
 
+-if(?OTP_RELEASE >= 27).
+-define(USE_OTP_JSON, true).
+-endif.
+
 -type config() :: #{
-    chars_limit =>  pos_integer(),
-    depth       =>  pos_integer(),
-    field_map   =>  field_map(),
-    level_map   =>  level_map(),
-    meta_filter =>  meta_filter(),
-    mfa_format  =>  mfa_format(),
-    report_cb   =>  report_cb(),
-    time_delim  =>  time_delim(),
-    time_offset =>  time_offset(),
-    time_unit   =>  time_unit()
+    chars_limit     =>  pos_integer(),
+    depth           =>  pos_integer(),
+    field_filter    =>  field_filter(),
+    field_map       =>  field_map(),
+    level_map       =>  level_map(),
+    line_delim      =>  line_delim(),
+    mfa_format      =>  mfa_format(),
+    report_cb       =>  report_cb(),
+    time_delim      =>  time_delim(),
+    time_offset     =>  time_offset(),
+    time_unit       =>  time_unit()
 }.
 %% The configuration term for `riak_log_json_formatter' is a <a
 %% href="https://www.erlang.org/doc/apps/erts/erlang#t:map/0">`map()'</a>
@@ -101,8 +112,8 @@
 %% >`io_lib:format/3'</a> to format the `message'. This value limits the
 %% total number of characters printed for each log event's `message' field
 %% - the overall line containing the full JSON object may be considerably
-%% longer, based on included metadata. Note that this is a soft limit; no
-%% hard limit is available.<br/>
+%% longer, based on included metadata and report fields.<br/>
+%% Note that this is a soft limit; no hard limit is available.<br/>
 %% There is no default limit on message length.</dd>
 %% <dt>`depth :: ' <a
 %% href="https://www.erlang.org/doc/apps/erts/erlang#t:pos_integer/0"
@@ -113,9 +124,15 @@
 %% href="https://www.erlang.org/doc/apps/stdlib/io.html#fwrite/3"
 %% >`io:fwrite/3'</a> for details.<br/>
 %% There is no default limit on depth.</dd>
+%% <dt>`field_filter :: ' {@link field_filter()}</dt>
+%% <dd>Indicates what fields to include in JSON output.<br/>
+%% The default behavior is to output all fields.<br/>
+%% Note that this filtering is applied <i>before</i> any field name mapping
+%% specified by the `field_map' configuration, if present, and applies
+%% <i>only</i> to top-level fields; nested fields are not evaluated.</dd>
 %% <dt>`field_map :: ' {@link field_map()}</dt>
 %% <dd>A map of [alternate] names to be output for JSON fields, possibly
-%% overriding the defaults returned by {@link default_fields()}.<br/>
+%% overriding the defaults returned by {@link default_fields/0. default_fields()}.<br/>
 %% Any top-level field name can be overridden, not just the predefined ones,
 %% but nested field names are not affected. For instance, if an event contains
 %% field `foo', in either its metadata or a report map, it can be mapped to
@@ -123,15 +140,15 @@
 %% The map need not include every field, only those to be overridden.</dd>
 %% <dt>`level_map :: ' {@link level_map()}</dt>
 %% <dd>A map of [alternate] levels or values to be output for the JSON `level'
-%% field, overriding the defaults returned by {@link default_level_map()}.<br/>
+%% field, overriding the defaults returned by {@link default_level_map/0. default_level_map()}.<br/>
 %% The map need not include every level, only those to be overridden.</dd>
-%% <dt>`meta_filter :: ' {@link meta_filter()}</dt>
-%% <dd>Indicates what metadata fields to include in JSON output.<br/>
-%% The default behavior is to output all fields, as if the `all' value was
-%% specified.<br/>
-%% Note that this filtering is applied <i>before</i> any field name mapping
-%% specified by the `field_map' configuration, if present, and applies
-%% <i>only</i> to top-level fields; nested fields are not evaluated.</dd>
+%% <dt>`line_delim :: ' {@link line_delim()}</dt>
+%% <dd>A byte or (possibly empty) list of bytes used to delimit output lines
+%% (JSON records). Note that <i>ANY</i> byte or list of bytes can be
+%% specified to satisfy the needs of the parser that will be reading the
+%% output - be <b><i>very</i></b> careful venturing outside the norms of
+%% `$\n', `$,', `""' (for a memory accumulator), or `",\n"'.<br/>
+%% Defaults to `$\n'.</dd>
 %% <dt>`mfa_format :: ' {@link mfa_format()}</dt>
 %% <dd>The level of verbosity of MFA information included in JSON output.<br/>
 %% The default is `compact'.</dd>
@@ -157,7 +174,35 @@
 %% All keys are optional, but configuration <i>MUST</i> be specified as a map,
 %% even if empty. Default values are used for any missing keys.
 
--type field_map() :: #{atom() => atom()}.
+-type event_field() :: level | meta | msg.
+%% Top-level fields present in all <a
+%% href="https://www.erlang.org/doc/apps/kernel/logger#t:log_event/0"
+%% >`logger:log_event()'</a> objects.
+%% Only the `level' field makes its way to the output; the `meta' and `msg'
+%% fields are transformed during processing.
+
+-type field_filter() :: {include | exclude, output_fields()}.
+%% Indicates what event, metadata, and report fields to include in, or
+%% exclude from, JSON output.
+%%
+%% Accepted values are:<dl>
+%% <dt>`{include, ' {@link output_fields()}`}'</dt>
+%% <dd>An explicit list specifying the <i>ONLY</i> fields that will be
+%% included in the output. All non-matching top-level fields will be
+%% excluded.<br/>
+%% An empty inclusion list will cause the configuration to be rejected as
+%% invalid.<ul><li>
+%% Note that use of the `include' filter can have unexpected consequences as
+%% new log generation statements are added to the system that may contain
+%% previously unused metadata or report tags that will be silently excluded.
+%% </li></ul></dd>
+%% <dt>`{exclude, ' {@link output_fields()}`}'</dt>
+%% <dd>An explicit list specifying top-level fields that will be excluded
+%% from the output. All non-matching fields will be included.<br/>
+%% An empty exclusion list is effectively ignored.</dd>
+%% </dl>
+
+-type field_map() :: #{output_field() => output_field()}.
 %% A (possibly sparse) map of alternate field names to be output to the JSON.
 %% Name mapping is only applied to top-level fields; nested field names are
 %% not evaluated for mapping.
@@ -175,13 +220,17 @@
 %% >unicode binary string</a> that does not require any characters to be
 %% escaped.
 
+-type line_delim() :: byte() | list(byte()).
+%% The byte or (possibly empty) list of bytes to be written between output
+%% lines.
+
 -type log_level() :: logger:level().
 %% One of the predefined constant logging <a
 %% href="https://www.erlang.org/doc/apps/kernel/logger.html#t:level/0"
 %% >levels</a>.
 
 -type meta_field() ::
-    domain | file | gl | line | mfa | ospid | proc | time.
+    domain | file | gl | line | mfa | ospid | pid | time.
 %% Predefined metadata field tags.
 %%
 %% Some of these are provided at the point at which the log event is generated,
@@ -200,8 +249,8 @@
 %% generated, provided by the LOG_xxx macros.</dd>
 %% <dt>`ospid'</dt><dd>The OS PID of the ERTS process,
 %% obtained by the formatter.</dd>
-%% <dt>`proc'</dt><dd>The Erlang PID of the process generating the event,
-%% provided by the `logger' module as the `pid' metadata field.</dd>
+%% <dt>`pid'</dt><dd>The Erlang PID of the process generating the event,
+%% provided by the `logger' module.</dd>
 %% <dt>`time'</dt><dd>The time at which the event occurred.<br/>
 %% Normally calculated as the time the event entered the `logger' module, but
 %% <i>CAN</i> be specified at the point of generation (as the value received
@@ -217,35 +266,18 @@
 %% The list <i>MAY</i> contain arbitrary fields (as atoms) included at the
 %% point of event generation.
 
--type meta_filter() :: all | none | {include | exclude, meta_fields()}.
-%% Indicates what metadata fields to include in, or exclude from, JSON output.
-%%
-%% Accepted values are:<dl>
-%% <dt>`all'</dt><dd>All specified and derived metadata fields are included
-%% in the JSON output. This is the default behavior if the `meta_filter'
-%% configuration key is not specified.</dd>
-%% <dt>`none'</dt>
-%% <dd>No metadata fields are included in the JSON output.</dd>
-%% <dt>`{include, ' {@link meta_fields()}`}'</dt>
-%% <dd>An explicit list specifying the <i>ONLY</i> fields that will be included
-%% in the output. All non-matching fields will be excluded.</dd>
-%% <dt>`{exclude, ' {@link meta_fields()}`}'</dt>
-%% <dd>An explicit list specifying fields that will be excluded from the
-%% output. All non-matching fields will be included.</dd>
-%% </dl><ul>
-%% <li>Empty inclusion/exclusion lists are equivalent to, but less efficient
-%% than, `none' or `all', respectively. Their use should be avoided.</li>
-%% <li>Note that use of the `include' filter can have unexpected consequences
-%% as new log generation statements are added to the system that may contain
-%% previously unused metadata tags that will be silently excluded.</li>
-%% </ul>
-
 -type mfa_format() :: compact | expand | all.
 %% <dl>
 %% <dt>`compact'</dt><dd>Outputs `"mfa":"M:F/A"'</dd>
 %% <dt>`expand'</dt><dd>Outputs `"module":"M","function":"F","arity":A'</dd>
 %% <dt>`all'</dt><dd>Outputs all of the above.</dd>
 %% </dl>
+
+-type output_field() :: level | message | timestamp | meta_field() | atom().
+%% A post-expansion log event field key.
+
+-type output_fields() :: nonempty_list(output_field()).
+%% A non-empty list of event field keys.
 
 -type report_cb() :: logger:report_cb().
 %% See <a
@@ -271,13 +303,13 @@
 %% Timestamp resolution.
 
 -define(CONF_KEYS, [
-    chars_limit, depth, level_map, meta_filter, msg_field,
+    chars_limit, depth, field_filter, level_map, line_delim,
     report_cb, time_delim, time_offset, time_unit
 ]).
 
 -define(DFLT_FIELDS, [
-    domain, file, function, gl, level, line,
-    message, module, ospid, pid, timestamp
+    arity, domain, file, function, gl, level, line,
+    message, mfa, module, ospid, pid, timestamp
 ]).
 -define(DFLT_FIELD_MAP, #{
     pid         => proc,
@@ -294,7 +326,7 @@
     info        => <<"INFO">>,
     debug       => <<"DEBUG">>
 }).
--define(DFLT_META_FILTER,   all).
+-define(DFLT_LINE_DELIM,    $\n).
 -define(DFLT_MFA_FORMAT,    compact).
 -define(DFLT_TIME_DELIM,    $T).
 -define(DFLT_TIME_OFFSET,   "Z").
@@ -303,7 +335,7 @@
 -define(DFLT_FCONFIG, #{
     field_map   => ?DFLT_FIELD_MAP,
     level_map   => ?DFLT_LEVEL_MAP,
-    meta_filter => ?DFLT_META_FILTER,
+    line_delim  => ?DFLT_LINE_DELIM,
     mfa_format  => ?DFLT_MFA_FORMAT,
     time_delim  => ?DFLT_TIME_DELIM,
     time_offset => ?DFLT_TIME_OFFSET,
@@ -372,28 +404,25 @@ check_config(FConfig) ->
 %% @doc Formats a log event as a JSON object on a single line.
 %% @end
 format(#{level := Level, meta := Metadata} = Event, FConfig) ->
-    Conf = maps:merge(?DFLT_FCONFIG, FConfig),
+    #{level_map := LM, line_delim := LD} =
+        Conf = maps:merge(?DFLT_FCONFIG, FConfig),
     Meta = build_meta_map(Metadata, Conf),
     MMap = case format_message(Event, Conf) of
         #{message := _} = MsgMap ->
-            maps:merge(Meta, MsgMap);
-        #{} = Map ->
-            maps:merge(Meta, Map#{message => <<"report">>});
+            MsgMap;
+        Map when erlang:is_map(Map) ->
+            Map#{message => <<"report">>};
         Bin ->
-            Meta#{message => Bin}
+            #{message => Bin}
     end,
-    LMap = MMap#{level => map_level_value(Level, maps:get(level_map, Conf))},
-    JsIn = map_field_keys(LMap, Conf),
-    encode_json_data(JsIn).
+    LMap = MMap#{level => map_level_value(Level, LM)},
+    JsIn = map_field_keys(filter_final(LMap, Meta, Conf), Conf),
+    [encode_value(JsIn), LD].
 
 %% ===================================================================
 %% Internal
 %% ===================================================================
 %% ToDo: Consider using map comprehensions in OTP 25+
-
--if(?OTP_RELEASE >= 27).
--define(USE_OTP_JSON,   true).
--endif.
 
 -type data_map() :: #{atom() => term()}.
 -type formatted() :: unicode:chardata().
@@ -401,16 +430,14 @@ format(#{level := Level, meta := Metadata} = Event, FConfig) ->
 
 -spec build_meta_map(
     Meta :: data_map(), FConfig :: config() ) -> data_map().
-build_meta_map(_Meta, #{meta_filter := none}) ->
-    #{};
-build_meta_map(Meta, #{meta_filter := {include, Fields}} = FConfig) ->
+build_meta_map(Meta, #{field_filter := {include, Fields}} = FConfig) ->
     build_meta_map_fold(maybe_inject_ospid(
         lists:member(ospid, Fields), maps:with(Fields, Meta)), FConfig);
-build_meta_map(Meta, #{meta_filter := {exclude, Fields}} = FConfig) ->
+build_meta_map(Meta, #{field_filter := {exclude, [_|_] = Fields}} = FConfig) ->
     build_meta_map_fold(maybe_inject_ospid(
         not lists:member(ospid, Fields), maps:without(Fields, Meta)), FConfig);
 build_meta_map(Meta, FConfig) ->
-    %% Default behavior as if FConfig = #{meta_filter := all}
+    %% Default behavior includes all fields
     build_meta_map_fold(maybe_inject_ospid(true, Meta), FConfig).
 
 -spec maybe_inject_ospid(
@@ -429,8 +456,13 @@ build_meta_map_fold(Meta, FConfig) ->
 -spec build_meta_map_fold(
     Key :: atom(), Val :: term(), State :: fold_state() ) -> fold_state().
 build_meta_map_fold(file, File, {Cfg, Res}) ->
-    [FN, D1, D2 | _] = lists:reverse(filename:split(File)),
-    Short = filename:join([D2, D1, FN]),
+    Short = case filename:split(File) of
+        [_, _, _, _ | _] = LongList ->
+            [FN, D1, D2 | _] = lists:reverse(LongList),
+            filename:join([D2, D1, FN]);
+        _ ->
+            File
+    end,
     {Cfg, Res#{file => erlang:iolist_to_binary(Short)}};
 build_meta_map_fold(mfa, MFA, {Cfg, Res}) ->
     Fmts = case maps:get(mfa_format, Cfg, ?DFLT_MFA_FORMAT) of
@@ -462,32 +494,8 @@ build_meta_map_fold(time, Micros, {#{
     TS = calendar:system_time_to_rfc3339(Time, [
         {unit, TU}, {offset, Offset}, {time_designator, TD}]),
     {Cfg, Res#{timestamp => erlang:list_to_binary(TS)}};
-build_meta_map_fold(Key, Val, State)->
-    %% Compiler will effectively fall directly through.
-    build_meta_map_fold_default(Key, Val, State).
-
--compile({inline, build_meta_map_fold_default/3}).
-
--spec build_meta_map_fold_default(
-    Key :: atom(), Val :: term(), State :: fold_state() ) -> fold_state().
-%% The OTP 'json' module's encoder doesn't accept pids, ports, or refs, so we
-%% convert them to binaries here so they'll be handled as strings. That means
-%% they'll be subjected to unnecessary escape processing, but they're short
-%% and that code is efficient when nothing needs to be escaped.
-%% The non-OTP encoder in this module handles these types directly without
-%% escaping, so we don't need any special handling here.
--ifdef(USE_OTP_JSON).
-build_meta_map_fold_default(Key, Val, {Cfg, Res})
-        when    erlang:is_pid(Val)
-        orelse  erlang:is_port(Val)
-        orelse  erlang:is_reference(Val) ->
-    {Cfg, Res#{Key => erlang:iolist_to_binary(io_lib:format("~0p", [Val]))}};
-build_meta_map_fold_default(Key, Val, {Cfg, Res})->
+build_meta_map_fold(Key, Val, {Cfg, Res})->
     {Cfg, Res#{Key => Val}}.
--else.  % use local implementation
-build_meta_map_fold_default(Key, Val, {Cfg, Res})->
-    {Cfg, Res#{Key => Val}}.
--endif. % ?USE_OTP_JSON
 
 -spec check_config_fold(
     Key :: atom(), Val :: term(), Errors :: list({term(), term()}) )
@@ -497,6 +505,16 @@ check_config_fold(K, V, R)
         when    (K =:= chars_limit orelse K =:= depth)
         andalso (erlang:is_integer(V) andalso V > 0) ->
     R;
+check_config_fold(field_filter, {exclude, []}, R) ->
+    R;
+check_config_fold(field_filter = K, {T, [_|_] = L} = V, R)
+        when T =:= include; T =:= exclude ->
+    case lists:all(fun erlang:is_atom/1, L) of
+        true ->
+            R;
+        _ ->
+            [{K, V} | R]
+    end;
 check_config_fold(field_map = K, V, R) when erlang:is_map(V) ->
     Check = fun
         (FK, FV, true) ->
@@ -528,11 +546,16 @@ check_config_fold(level_map = K, V, R) when erlang:is_map(V) ->
         _ ->
             [{K, V} | R]
     end;
-check_config_fold(meta_filter, V, R) when V =:= all; V =:= none ->
+check_config_fold(line_delim, V, R)
+        when erlang:is_integer(V), V >= 0, V =< 255 ->
     R;
-check_config_fold(meta_filter = K, {T, [_|_] = L} = V, R)
-        when T =:= include; T =:= exclude ->
-    case lists:all(fun erlang:is_atom/1, L) of
+check_config_fold(line_delim, [], R) ->
+    R;
+check_config_fold(line_delim = K, [_|_] = V, R) ->
+    Check = fun(B) ->
+        erlang:is_integer(B) andalso B >= 0 andalso B =< 255
+    end,
+    case lists:all(Check, V) of
         true ->
             R;
         _ ->
@@ -560,29 +583,103 @@ check_config_fold(time_unit, V, R)
 check_config_fold(K, V, R) ->
     [{K, V} | R].
 
+-spec filter_final(
+    MMap :: data_map(), Meta :: data_map(), Conf :: config() )
+        -> data_map().
+%% @hidden `Meta' is already filtered, so filter `MMap' then merge.
+filter_final(MMap, Meta, #{field_filter := {include, Fields}}) ->
+    maps:merge(Meta, maps:with(Fields, MMap));
+filter_final(MMap, Meta, #{field_filter := {exclude, [_|_] = Fields}}) ->
+    maps:merge(Meta, maps:without(Fields, MMap));
+filter_final(MMap, Meta, _Conf) ->
+    maps:merge(Meta, MMap).
+
 -spec format_message(
     Event :: logger:log_event(), FConfig :: config() )
-        -> data_map() | formatted().
-format_message(#{msg := {report, Report}} = Event, Conf)
-    when not erlang:is_map_key(report_cb, Conf) ->
-    case Report of
-        #{} = M ->
-            M;
-        [] ->
-            #{};
-        [_|_] = L ->
-            maps:from_list(L);
-        _ ->
-            %% Invalid, see how logger_formatter does with it
-            logger_formatter_format(Event, Conf)
-    end;
+        -> data_map() | binary().
+%% @hidden Format the `msg' value of `Event'.
+format_message(#{msg := {Arg, _} = Data}, Conf)
+        when Arg =:= string; erlang:is_list(Arg) ->
+    erlang:iolist_to_binary(format_message_string(Data, Conf));
+format_message(#{msg := {report, [_|_] = Rpt}} = Event, Conf) ->
+    format_message(Event#{msg := {report, maps:from_list(Rpt)}}, Conf);
+format_message(#{msg := {report, #{report_cb := CB}}} = Event, Conf)
+        when erlang:is_function(CB, 1); erlang:is_function(CB, 2) ->
+    logger_formatter_format(Event, Conf);
+format_message(#{msg := {report, _}} = Event, #{report_cb := CB} = Conf)
+        when erlang:is_function(CB, 1); erlang:is_function(CB, 2) ->
+    logger_formatter_format(Event, Conf);
+format_message(#{msg := {report, Rpt}}, _Conf) when erlang:is_map(Rpt) ->
+    Rpt;
 format_message(Event, Conf) ->
     logger_formatter_format(Event, Conf).
+
+-spec format_message_string(
+    Msg :: {string | unicode:charlist(), list()}, Conf :: config() )
+        -> iolist().
+%% @hidden Format any non-report message.
+format_message_string({string, [_|_] = Str}, Conf) ->
+    format_message_string("~ts", [Str], Conf);
+format_message_string({string, []}, _Conf) ->
+    "none";
+format_message_string({[_|_] = Fmt, [_|_] = Args}, Conf) ->
+    format_message_string(Fmt, Args, Conf);
+format_message_string({[_|_] = Fmt, []}, Conf) ->
+    format_message_string("~ts", [Fmt], Conf);
+format_message_string({[], [_|_] = Args}, Conf) ->
+    format_message_string("MISSING FORMAT. Args: ~0p", [Args], Conf);
+format_message_string({[], []}, _Conf) ->
+    "none";
+format_message_string(Data, Conf) ->
+    format_message_string("STRING ERROR. Data: ~0p", [Data], Conf).
+
+-spec format_message_string(
+    Fmt :: unicode:charlist(), Args :: list(), Conf :: config() )
+        -> iolist().
+%% @hidden As by `io_lib:format/3' with depth limited.
+format_message_string(Format, Args, Conf) ->
+    Opts = case Conf of
+        #{chars_limit := Limit} ->
+            [{chars_limit, Limit}];
+        _ ->
+            []
+    end,
+    try
+        Scanned = io_lib:scan_format(Format, Args),
+        Specs = case Conf of
+            #{depth := Depth} ->
+                format_filter(Scanned, Depth);
+            _ ->
+                Scanned
+        end,
+        io_lib:build_text(Specs, Opts)
+    catch
+        Class:Reason ->
+            io_lib:format(
+                "FORMAT ERROR: ~0tp:~0tp: ~0tp - ~0tp",
+                [Class, Reason, Format, Args])
+    end.
+
+-spec format_filter(
+    Specs :: list(io_lib:format_spec()),
+    Depth :: pos_integer() )
+        -> list(io_lib:format_spec()).
+%% @hidden Apply depth limit to `~p' and `~w' format specs.
+format_filter([#{control_char := CC, args := Args} = Spec | Specs], Depth)
+        when CC =:= $p; CC =:= $w ->
+    UC = (CC - ($a - $A)),  % to uppercase, p => P, w => W
+    [Spec#{control_char => UC, args => Args ++ [Depth]}
+        | format_filter(Specs, Depth)];
+format_filter([Spec | Specs], Depth) ->
+    [Spec | format_filter(Specs, Depth)];
+format_filter([], _Depth) ->
+    [].
 
 -spec format_mfa(
     Fmts :: list(compact | expand),
     MFA :: {module(), atom(), pos_integer()},
     Res :: data_map() ) -> data_map().
+%% @hidden Format MFA as `compact', `expand'ed, or both.
 format_mfa([compact | Fmts], {M, F, A} = MFA, Res) ->
     Val = erlang:iolist_to_binary([
         erlang:atom_to_binary(M), $:, erlang:atom_to_binary(F),
@@ -596,16 +693,25 @@ format_mfa([], _MFA, Res) ->
 
 -spec logger_formatter_format(
     Event :: logger:log_event(), FConfig :: logger:formatter_config() )
-        -> unicode:chardata().
+        -> binary().
+%% @hidden Let the `logger_formatter' module format `msg'.
 logger_formatter_format(Event, Conf) ->
     FConfig = maps:merge(?DFLT_LOGGER_FCONFIG,
         maps:with([chars_limit, depth, report_cb], Conf)),
     IOList = logger_formatter:format(Event, FConfig),
     erlang:iolist_to_binary(IOList).
 
+%% Dialyzer correctly warns that the 2nd head can never match because
+%% 'field_map' is present in the default config. We don't want to trigger a
+%% 'badmatch' error if that ever changes, so we're keeping the protective
+%% code in place.
+-dialyzer({no_match, map_field_keys/2}).
+
 -spec map_field_keys(MMap :: data_map(), Conf :: config()) -> data_map().
 map_field_keys(MMap, #{field_map := FMap}) ->
-    maps:fold(fun map_field_key_fold/3, MMap, FMap).
+    maps:fold(fun map_field_key_fold/3, MMap, FMap);
+map_field_keys(MMap, _Conf) ->
+    MMap.
 
 -spec map_field_key_fold(
     Key :: atom(), Val :: atom(), MMap :: data_map() ) -> data_map().
@@ -660,54 +766,57 @@ non_escape_chars(_) ->
 %% ===================================================================
 
 -ifdef(USE_OTP_JSON).
--define(ENCODE_JSON(Object),    json:encode(Object)).
+-define(ENCODE_BINARY(Value),   json:encode_binary(Value)).
 -else.  % use local implementation
--define(ENCODE_JSON(Object),    encode_json(Object)).
+-compile({inline, escape_char/1}).
+-define(ENCODE_BINARY(Value),
+    E = << (escape_char(Ch)) || <<Ch>> <= Value >>, << $\", E/binary, $\" >>
+).
 -endif. % ?USE_OTP_JSON
 
--spec encode_json_data(Data :: data_map()) -> formatted().
-encode_json_data(Data) ->
-    Fold = fun(Key, Val, Res) ->
-        [ [?ENCODE_JSON(Key), $:, ?ENCODE_JSON(Val)] | Res ]
-    end,
-    [ ${, lists:join($,, maps:fold(Fold, [], Data)), $}, $\n ].
-
--ifndef(USE_OTP_JSON).
-
-%% Encode (mostly) as per
-%% https://www.erlang.org/doc/apps/stdlib/json.html#encode/1
--spec encode_json(Value :: term()) -> formatted().
-
-%% Handle JSON special values
-encode_json(null) ->
+-spec encode_value(Value :: term()) -> formatted().
+%% @hidden Primary value encoder
+encode_value(Value) when erlang:is_binary(Value) ->
+    ?ENCODE_BINARY(Value);
+encode_value(null) ->
     <<"null">>;
-encode_json(true) ->
+encode_value(true) ->
     <<"true">>;
-encode_json(false) ->
+encode_value(false) ->
     <<"false">>;
-%% General encoding
-encode_json(Value) when erlang:is_atom(Value) ->
-    encode_json(erlang:atom_to_binary(Value, utf8));
-encode_json(Value) when erlang:is_binary(Value) ->
-    [ $\", json_escape_binary(Value), $\" ];
-encode_json(Value) when erlang:is_float(Value) ->
+encode_value(Value) when erlang:is_atom(Value) ->
+    encode_value(erlang:atom_to_binary(Value, utf8));
+encode_value(Value) when erlang:is_float(Value) ->
     erlang:float_to_binary(Value, [{decimals, 9}, compact]);
-encode_json(Value) when erlang:is_integer(Value) ->
+encode_value(Value) when erlang:is_integer(Value) ->
     erlang:integer_to_binary(Value);
-encode_json([]) ->
+encode_value([]) ->
     <<$[, $]>>;
-encode_json([_|_] = Elems) ->
-    [ $[, lists:join($,, [encode_json(Elem) || Elem <- Elems]), $] ];
-encode_json(Value) when erlang:is_map(Value) ->
-    encode_json_map(Value);
-encode_json(Value)
+encode_value([_|_] = Value) ->
+    case io_lib:deep_char_list(Value) of
+        true ->
+            encode_value(erlang:iolist_to_binary(Value));
+        _ ->
+            Vals = [encode_value(Val) || Val <- Value],
+            [ $[, lists:join($,, Vals), $] ]
+    end;
+encode_value(Value) when erlang:is_map(Value) ->
+    Vals = maps:fold(
+        fun(Key, Val, Res) ->
+            [[encode_value(Key), $:, encode_value(Val)] | Res]
+        end, [], Value),
+    [ ${, lists:join($,, Vals), $} ];
+encode_value(Value)
         when    erlang:is_pid(Value)
         orelse  erlang:is_port(Value)
         orelse  erlang:is_reference(Value) ->
     %% These types will never contain escapable characters.
-    [ $\", erlang:iolist_to_binary(io_lib:format("~0p", [Value])), $\" ];
-encode_json(Value) ->
-    encode_json(erlang:iolist_to_binary(io_lib:format("~0p", [Value]))).
+    Val = erlang:iolist_to_binary(io_lib:format("~0p", [Value])),
+    << $\", Val/binary, $\" >>;
+encode_value(Value) ->
+    encode_value(erlang:iolist_to_binary(io_lib:format("~0p", [Value]))).
+
+-ifndef(USE_OTP_JSON).
 
 %% The OTP-27 encoder lets the JIT build jump tables instead of range
 %% comparisons. Without doing a slew of timing tests on earlier OTP releases
@@ -715,34 +824,20 @@ encode_json(Value) ->
 %% coding and readability. Presumably, most logged strings won't contain any,
 %% or many, escapable characters.
 
--spec json_escape_binary(Bin :: binary()) -> binary().
-json_escape_binary(Bin) ->
-    << (json_escape_char(Ch)) || <<Ch>> <= Bin >>.
-
--spec json_escape_char(Ch :: non_neg_integer()) -> binary().
-json_escape_char($")    -> <<"\\\"">>;
-json_escape_char($\\)   -> <<"\\\\">>;
-json_escape_char($\b)   -> <<"\\b">>;
-json_escape_char($\t)   -> <<"\\t">>;
-json_escape_char($\n)   -> <<"\\n">>;
-json_escape_char($\f)   -> <<"\\f">>;
-json_escape_char($\r)   -> <<"\\r">>;
+-spec escape_char(Ch :: non_neg_integer()) -> binary().
+escape_char($")    -> <<"\\\"">>;
+escape_char($\\)   -> <<"\\\\">>;
+escape_char($\b)   -> <<"\\b">>;
+escape_char($\t)   -> <<"\\t">>;
+escape_char($\n)   -> <<"\\n">>;
+escape_char($\f)   -> <<"\\f">>;
+escape_char($\r)   -> <<"\\r">>;
 %% Literals *might* be faster, but we don't expect to encounter these much
 %% in this use case.
-json_escape_char(Ch) when Ch < 16 -> <<"\\u000", ($0 + Ch):8>>;
-json_escape_char(Ch) when Ch < 32 -> <<"\\u001", ($0 + Ch):8>>;
+escape_char(Ch) when Ch < 16 -> <<"\\u000", ($0 + Ch):8>>;
+escape_char(Ch) when Ch < 32 -> <<"\\u001", ($0 + Ch):8>>;
 %% Everything else *should* already be valid UTF-8.
-json_escape_char(Ch)    -> <<Ch>>.
-
--spec encode_json_map(Data :: data_map()) -> formatted().
-encode_json_map(Data) ->
-    [ ${, lists:join($,, maps:fold(fun encode_json_map/3, [], Data)), $} ].
-
--spec encode_json_map(
-    Key :: atom(), Val :: term(), Result :: list(formatted()) )
-        -> list(formatted()).
-encode_json_map(Key, Val, Res) ->
-    [encode_json(Key), $:, encode_json(Val) | Res].
+escape_char(Ch)    -> <<Ch>>.
 
 -endif. % ?USE_OTP_JSON
 

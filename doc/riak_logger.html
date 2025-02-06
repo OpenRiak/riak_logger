@@ -14,7 +14,7 @@
 
 
 <h2><a name="description">Description</a></h2><p>Riak kernel logger configuration and operations.</p>
- 
+
   Filter functions are defined as
   <pre>   filter_&lt;codes&gt;(Event :: logger:log_event(), Action :: stop | log)
        -&gt; logger:log_event() | stop | ignore.</pre>
@@ -23,16 +23,16 @@
    e - match emulator-spawned process crashes
    p - match application/supervisor progress reports
    r - match events from processes whose group leader is remote
-   s - match SASL reports</pre><p>  
-This allows a single filter to be specified in a logger handler  
-specification, reducing or eliminating filter chaining to improve  
+   s - match SASL reports</pre><p>
+This allows a single filter to be specified in a logger handler
+specification, reducing or eliminating filter chaining to improve
 performance.</p>
- 
+
   Note that some non-composite filters are semantically equivalent to
   functions in the OTP <code>logger_filters</code> module and are documented as such.
   In all cases the filters defined here should outperform their OTP
   counterparts due to explicit function head pattern matching.
- 
+
 <h2><a name="types">Data Types</a></h2>
 
 <h3 class="typedecl"><a name="type-f_action">f_action()</a></h3>
@@ -53,7 +53,7 @@ performance.</p>
 <tr><td valign="top"><a href="#filter_e-2">filter_e/2</a></td><td>Match emulator-spawned process crash reports.</td></tr>
 <tr><td valign="top"><a href="#filter_p-2">filter_p/2</a></td><td>Optimized match for progress reports.</td></tr>
 <tr><td valign="top"><a href="#filter_ps-2">filter_ps/2</a></td><td>Match p/s event patterns.</td></tr>
-<tr><td valign="top"><a href="#filter_r-2">filter_r/2</a></td><td>Optimized match for events from processes whose group leader is  
+<tr><td valign="top"><a href="#filter_r-2">filter_r/2</a></td><td>Optimized match for events from processes whose group leader is
 on a remote node.</td></tr>
 <tr><td valign="top"><a href="#filter_s-2">filter_s/2</a></td><td>Optimized match for SASL events.</td></tr>
 </table>
@@ -65,7 +65,7 @@ on a remote node.</td></tr>
 <p><tt>filter_c(Event::<a href="https://www.erlang.org/doc/apps/kernel/logger.html#t:log_event/0">logger:log_event()</a>, Action::<a href="#type-f_action">f_action()</a>) -&gt; <a href="#type-f_result">f_result()</a></tt><br></p>
 <p> </p>
 </div><p><p>Match <code>proc_lib</code>-style crash reports.</p>
- 
+
   No equivalent in the <code>logger_filters</code> module.</p>
 
 <h3 class="function"><a name="filter_ce-2">filter_ce/2</a></h3>
@@ -103,7 +103,7 @@ on a remote node.</td></tr>
 <p><tt>filter_e(Event::<a href="https://www.erlang.org/doc/apps/kernel/logger.html#t:log_event/0">logger:log_event()</a>, Action::<a href="#type-f_action">f_action()</a>) -&gt; <a href="#type-f_result">f_result()</a></tt><br></p>
 <p> </p>
 </div><p><p>Match emulator-spawned process crash reports.</p>
- 
+
   No equivalent in the <code>logger_filters</code> module.</p>
 
 <h3 class="function"><a name="filter_p-2">filter_p/2</a></h3>
@@ -124,9 +124,9 @@ on a remote node.</td></tr>
 <p><tt>filter_r(Event::<a href="https://www.erlang.org/doc/apps/kernel/logger.html#t:log_event/0">logger:log_event()</a>, Action::<a href="#type-f_action">f_action()</a>) -&gt; <a href="#type-f_result">f_result()</a></tt><br></p>
 <p> </p>
 </div><p>Equivalent to <a href="logger_filters.html#remote_gl-2"><tt>logger_filters:remote_gl(Event, Action)</tt></a>.</p>
-<p><p>Optimized match for events from processes whose group leader is  
+<p><p>Optimized match for events from processes whose group leader is
 on a remote node.</p>
- 
+
   This filter is more expensive to execute than others in this module, and
   should be reserved for applications where it is known to be relevant.</p>
 

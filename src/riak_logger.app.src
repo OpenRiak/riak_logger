@@ -21,7 +21,7 @@
 
 {application, riak_logger, [
     {description,   "Riak Kernel Logger Support"},
-    {vsn,           "1.2.0"},
+    {vsn,           "1.2.1"},
     {registered,    []},
     {applications,  [kernel, stdlib]},
     {env,           []},
