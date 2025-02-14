@@ -21,6 +21,33 @@
 %%
 %% @doc A JSON formatter for the Kernel Logger.
 %%
+%% The formatter is widely configurable as described for its {@link config()}
+%% map, though in most cases the default configuration should be fine.
+%%
+%% Basic logging of JSON records, one per line, to rolling log files in Riak's
+%% `advanced.config' file might look like:
+%% ```
+%%  {kernel, [
+%%      {logger, [
+%%           %% Records ALL events to JSON log
+%%          {handler, json_log, logger_std_h, #{
+%%              level => all,
+%%              config => #{
+%%                  compress_on_rotate => false,
+%%                  file => "{{platform_log_dir}}/json/riak-log.json",
+%%                  file_check => 100,
+%%                  max_no_bytes => 1048576,
+%%                  max_no_files => 10
+%%              },
+%%              filter_default => log,
+%%              filters => [],
+%%              formatter => {riak_log_json_formatter, #{
+%%                  %% Defaults should be suitable for most use cases.
+%%              }}
+%%          }}
+%%      ]}
+%%  ]}
+%% '''
 %% See the <a
 %% href="https://www.erlang.org/doc/apps/kernel/logger_chapter#handlers"
 %% >Handlers</a> and <a
@@ -132,7 +159,8 @@
 %% <i>only</i> to top-level fields; nested fields are not evaluated.</dd>
 %% <dt>`field_map :: ' {@link field_map()}</dt>
 %% <dd>A map of [alternate] names to be output for JSON fields, possibly
-%% overriding the defaults returned by {@link default_fields/0. default_fields()}.<br/>
+%% overriding the defaults returned by {@link default_field_map/0.
+%% default_field_map()}.<br/>
 %% Any top-level field name can be overridden, not just the predefined ones,
 %% but nested field names are not affected. For instance, if an event contains
 %% field `foo', in either its metadata or a report map, it can be mapped to
@@ -140,7 +168,8 @@
 %% The map need not include every field, only those to be overridden.</dd>
 %% <dt>`level_map :: ' {@link level_map()}</dt>
 %% <dd>A map of [alternate] levels or values to be output for the JSON `level'
-%% field, overriding the defaults returned by {@link default_level_map/0. default_level_map()}.<br/>
+%% field, overriding the defaults returned by {@link default_level_map/0.
+%% default_level_map()}.<br/>
 %% The map need not include every level, only those to be overridden.</dd>
 %% <dt>`line_delim :: ' {@link line_delim()}</dt>
 %% <dd>A byte or (possibly empty) list of bytes used to delimit output lines
@@ -261,7 +290,7 @@
 %% and are included "as-is" when present in the event's metadata (subject to
 %% filtering).
 
--type meta_fields() :: nonempty_list(meta_field() | atom()).
+-type meta_fields() :: nonempty_list(meta_field() | output_field()).
 %% A non-empty list of metadata field keys.
 %% The list <i>MAY</i> contain arbitrary fields (as atoms) included at the
 %% point of event generation.
@@ -273,7 +302,7 @@
 %% <dt>`all'</dt><dd>Outputs all of the above.</dd>
 %% </dl>
 
--type output_field() :: level | message | timestamp | meta_field() | atom().
+-type output_field() :: level | message | timestamp | atom().
 %% A post-expansion log event field key.
 
 -type output_fields() :: nonempty_list(output_field()).
@@ -359,25 +388,64 @@
 %% ===================================================================
 
 -spec default_config() -> config().
-%% @doc Returns the {@link config(). configuration} defaults.
+%% @doc Returns the default {@link config(). configuration}.
+%%
+%% The default configuration is:
+%% ```
+%%  #{
+%%      field_map   => default_field_map(),
+%%      level_map   => default_level_map(),
+%%      line_delim  => $\n,
+%%      mfa_format  => compact,
+%%      time_delim  => $T,
+%%      time_offset => "Z",
+%%      time_unit   => millisecond
+%%  }
+%% '''
 %% @end
 default_config() ->
     ?DFLT_FCONFIG.
 
 -spec default_fields() -> nonempty_list(atom()).
 %% @doc Returns the default fields that may be in a JSON output object.
+%%
+%% This function has little, if any, value and may be removed in a future
+%% release.
 %% @end
 default_fields() ->
     ?DFLT_FIELDS.
 
 -spec default_field_map() -> field_map().
 %% @doc Returns the default {@link field_map()}.
+%%
+%% The default field map is:
+%% ```
+%%  #{
+%%      pid         => proc,
+%%      %% Mapping to 'domain' gets special handling
+%%      log_type    => domain
+%%  }
+%% '''
 %% @end
 default_field_map() ->
     ?DFLT_FIELD_MAP.
 
 -spec default_level_map() -> level_map().
 %% @doc Returns the default {@link level_map()}.
+%%
+%% The default level map is:
+%% ```
+%%  #{
+%%      emergency   => <<"EMERG">>,
+%%      alert       => <<"ALERT">>,
+%%      critical    => <<"CRIT">>,
+%%      error       => <<"ERROR">>,
+%%      warning     => <<"WARN">>,
+%%      notice      => <<"NOTICE">>,
+%%      info        => <<"INFO">>,
+%%      debug       => <<"DEBUG">>
+%%  }
+%% '''
 %% @end
 default_level_map() ->
     ?DFLT_LEVEL_MAP.
@@ -389,6 +457,9 @@ default_level_map() ->
 -spec check_config(FConfig :: logger:formatter_config() )
         -> ok | {error, term()}.
 %% @doc Validates a configuration map.
+%%
+%% This function is called by the Kernel Logger when a handler is configured
+%% to use this formatter.
 %% @end
 check_config(FConfig) ->
     case maps:fold(fun check_config_fold/3, [], FConfig) of
@@ -398,26 +469,122 @@ check_config(FConfig) ->
             {error, {invalid_formatter_config, ?MODULE, Errs}}
     end.
 
+%% See To Do comment matching Stack below.
+-dialyzer({no_match, format/2}).
+
 -spec format(
     Event :: logger:log_event(), FConfig :: config() )
         -> unicode:chardata().
 %% @doc Formats a log event as a JSON object on a single line.
+%%
+%% This function is called by Kernel Logger handlers to format log events.
+%%
+%% In all cases we'll output a valid JSON record with at least `level',
+%% `message', and `timestamp' fields, subject to configured filtering and/or
+%% field name mapping.
+%%
+%% Per documentation and implementation of the <a
+%% href="https://www.erlang.org/doc/apps/kernel/logger#t:log_event/0"
+%% >`logger:log_event()'</a> type, the `level', `meta' and `msg' fields
+%% <i>MUST</i> all be present in `Event' on entry to this function.
+%% Testing has shown that `kernel' code violates this contract in some
+%% invocation scenarios, so we're defensive against non-compliant events.
+%%
+%% The {@link config(). `FConfig'} map has been heavily validated by
+%% {@link check_config/1. `check_config(FConfig)'} when the handler using this
+%% formatter was added, so we aren't paranoid about contract violations in
+%% that parameter it gets to this function.
 %% @end
-format(#{level := Level, meta := Metadata} = Event, FConfig) ->
-    #{level_map := LM, line_delim := LD} =
-        Conf = maps:merge(?DFLT_FCONFIG, FConfig),
+format(#{
+        level := Level, meta := #{time := _, gl := _, pid := _} = Metadata,
+        msg := MsgVal} = Event, FConfig) when erlang:is_tuple(MsgVal) ->
+    Conf = merge_config(FConfig),
     Meta = build_meta_map(Metadata, Conf),
-    MMap = case format_message(Event, Conf) of
+    MMap = try format_message(Event, Conf) of
         #{message := _} = MsgMap ->
             MsgMap;
         Map when erlang:is_map(Map) ->
             Map#{message => <<"report">>};
         Bin ->
             #{message => Bin}
+    catch
+        Class:Reason:Stack ->
+            %% Our sole requirements here are:
+            %% 1) Return a valid map with a `message' field whose value is a
+            %%    quoted unicode string.
+            %% 2) Do NOT raise another exception.
+            %%
+            %% We know from the head guard that MsgVal is a tuple, so let
+            %% the encoder wrap it with quotes.
+            MsgBin = format_any_msg(MsgVal, FConfig),
+            {EFmt, EArgs, LocInf} = case Stack of
+                %% 'A' may be Arity or Args, format the same either way
+                [{Mod, Fun, A, Info} | _] ->
+                    {"~0tp:~0tp/~0tp", [Mod, Fun, A], Info};
+                %% ToDo: dialyzer says this can never match?
+                %% Docs say it's a legit pattern, ignoring until a later date.
+                [{Fun, A, Info} | _] ->
+                    {"~0tp/~0tp", [Fun, A], Info};
+                %% Nothing else is allowed, but don't want a case_clause here
+                Other ->
+                    {"~0tp", [Other], []}
+            end,
+            {Fmt, Args} = case LocInf of
+                [_|_] = InfoList ->
+                    case maps:from_list(InfoList) of
+                        #{file := F, line := L} ->
+                            {EFmt ++ " ~ts:~b",
+                                EArgs ++ [filename:basename(F), L]};
+                        #{file := F} ->
+                            {EFmt ++ " ~ts", EArgs ++ [filename:basename(F)]};
+                        #{line := L} ->
+                            {EFmt ++ " line:~b", EArgs ++ [L]};
+                        _ ->
+                            {EFmt, EArgs}
+                    end;
+                _ ->
+                    {EFmt, EArgs}
+            end,
+            ErrBin = unicode:characters_to_binary(io_lib:format(
+                "~0tp:~0tp: " ++ Fmt, [Class, Reason] ++ Args)),
+            #{message => MsgBin, 'format-error' => ErrBin}
     end,
-    LMap = MMap#{level => map_level_value(Level, LM)},
+    LMap = MMap#{level => map_level_value(Level, maps:get(level_map, Conf))},
     JsIn = map_field_keys(filter_final(LMap, Meta, Conf), Conf),
-    [encode_value(JsIn), LD].
+    [encode_value(JsIn), maps:get(line_delim, Conf)];
+%% Per 'logger' documentation, an Event ALWAYS contains the below 'meta'
+%% element. Testing has shown that there are paths through the logger,
+%% at least via the old error_logger module, where this contract is violated.
+format(Event, FConfig) when not erlang:is_map_key(meta, Event) ->
+    Meta = #{
+        gl => erlang:group_leader(),
+        pid => erlang:self(),
+        time => logger:timestamp()
+    },
+    format(Event#{meta => Meta}, FConfig);
+%% Similar to the above, ensure that the 'meta' map always contains at least
+%% the keys required by the contract. This *may* be dead code, but given that
+%% we know the contract isn't inviolable rather safe than sorry.
+%% This *should* always be invoked within the process generating the event.
+format(#{meta := Meta} = Event, FConfig)
+        when not erlang:is_map_key(time, Meta) ->
+    format(Event#{meta => Meta#{time => logger:timestamp()}}, FConfig);
+format(#{meta := Meta} = Event, FConfig)
+        when not erlang:is_map_key(gl, Meta) ->
+    format(Event#{meta => Meta#{gl => erlang:group_leader()}}, FConfig);
+format(#{meta := Meta} = Event, FConfig)
+        when not erlang:is_map_key(pid, Meta) ->
+    format(Event#{meta => Meta#{pid => erlang:self()}}, FConfig);
+%% Following should NEVER match, but more defensive code ...
+format(Event, FConfig) when not erlang:is_map_key(level, Event) ->
+    format(Event#{level => error}, FConfig);
+format(#{msg := Msg} = Event, FConfig) ->
+    %% Msg is not a tuple, make it one.
+    %% This is pretty inefficient, but it should never, ever happen.
+    format(Event#{msg := {string, format_any_msg(Msg, FConfig)}}, FConfig);
+format(Event, FConfig) ->
+    %% No 'msg' field at all
+    format(Event#{msg => {string, <<>>}}, FConfig).
 
 %% ===================================================================
 %% Internal
@@ -463,7 +630,7 @@ build_meta_map_fold(file, File, {Cfg, Res}) ->
         _ ->
             File
     end,
-    {Cfg, Res#{file => erlang:iolist_to_binary(Short)}};
+    {Cfg, Res#{file => unicode:characters_to_binary(Short)}};
 build_meta_map_fold(mfa, MFA, {Cfg, Res}) ->
     Fmts = case maps:get(mfa_format, Cfg, ?DFLT_MFA_FORMAT) of
         all ->
@@ -534,7 +701,7 @@ check_config_fold(level_map = K, V, R) when erlang:is_map(V) ->
         (LK, LV, true) when erlang:is_atom(LV), LV =/= LK ->
             lists:member(LK, Levels) andalso lists:member(LV, Levels);
         (LK, LV, true) when erlang:is_binary(LV), erlang:byte_size(LV) > 0 ->
-            VList = erlang:binary_to_list(LV),
+            VList = unicode:characters_to_list(LV),
             lists:member(LK, Levels) andalso
                 non_escape_chars(VList) andalso io_lib:char_list(VList);
         (_, _, _) ->
@@ -596,47 +763,94 @@ filter_final(MMap, Meta, _Conf) ->
 
 -spec format_message(
     Event :: logger:log_event(), FConfig :: config() )
-        -> data_map() | binary().
+        -> data_map() | formatted().
 %% @hidden Format the `msg' value of `Event'.
 format_message(#{msg := {Arg, _} = Data}, Conf)
         when Arg =:= string; erlang:is_list(Arg) ->
-    erlang:iolist_to_binary(format_message_string(Data, Conf));
-format_message(#{msg := {report, [_|_] = Rpt}} = Event, Conf) ->
-    format_message(Event#{msg := {report, maps:from_list(Rpt)}}, Conf);
-format_message(#{msg := {report, #{report_cb := CB}}} = Event, Conf)
-        when erlang:is_function(CB, 1); erlang:is_function(CB, 2) ->
-    logger_formatter_format(Event, Conf);
-format_message(#{msg := {report, _}} = Event, #{report_cb := CB} = Conf)
-        when erlang:is_function(CB, 1); erlang:is_function(CB, 2) ->
-    logger_formatter_format(Event, Conf);
-format_message(#{msg := {report, Rpt}}, _Conf) when erlang:is_map(Rpt) ->
-    Rpt;
+    unicode:characters_to_binary(format_message_string(Data, Conf));
+%% Anything else *should* be a 'report'.
+format_message(#{msg := {report, Rpt}} = Event, Conf) ->
+    case format_message_report(Rpt, Conf) of
+        pass ->
+            logger_formatter_format(Event, Conf);
+        Res ->
+            Res
+    end;
+%% In case they add something new ...
 format_message(Event, Conf) ->
     logger_formatter_format(Event, Conf).
 
+-spec format_message_report(
+    Rpt :: logger:report(), Conf :: config() )
+        -> data_map() | formatted() | pass.
+%% @hidden Handle a bunch of funky 'report' situations.
+%% Neither our map encoder or 'logger_formatter' can handle some of the
+%% reports from older subsystems unaided, so we match patterns that need
+%% special handling.
+%% Return 'pass' to format the event with logger_formatter:format/2.
+%% @end
+format_message_report([], _Conf) ->
+    <<>>;
+%% Make sure the report is a map so we can match on its contents.
+format_message_report([_|_] = Rpt, Conf) ->
+    format_message_report(maps:from_list(Rpt), Conf);
+%% If the event or config specify a callback, let 'logger_formatter' have it.
+format_message_report(#{report_cb := CB}, _Conf)
+        when erlang:is_function(CB, 1); erlang:is_function(CB, 2) ->
+    pass;
+format_message_report(_Rpt, #{report_cb := CB})
+        when erlang:is_function(CB, 1); erlang:is_function(CB, 2) ->
+    pass;
+%% The problem here is that Args may be a list of integers, and a lot more
+%% integers fall into the unicode range than the latin1 range, so we can
+%% mis-type the value without context and print garbage.
+%% Not sure if this should be limited to 'error_logger' or not.
+format_message_report(
+        #{args := Args, format := Fmt, label := {error_logger, _}} = Rpt, Conf)
+        when erlang:is_list(Args), erlang:is_list(Fmt) ->
+    Res = maps:without([args, format], Rpt),
+    Res#{message => format_message_string({Fmt, Args}, Conf)};
+%% We don't know where it came from, but hopefully the source follows a sane
+%% format/args mapping.
+format_message_report(#{args := Args, format := Fmt} = Rpt, Conf)
+        when erlang:is_list(Args), erlang:is_list(Fmt) ->
+    Msg = case format_message_string({Fmt, Args}, Conf) of
+        <<"FORMAT ERROR: ", _/binary>> ->
+            format_message_string({"~0tp - ~0tp", [Fmt, Args]}, Conf);
+        Good ->
+            Good
+    end,
+    Res = maps:without([args, format], Rpt),
+    Res#{message => Msg};
+%% Hopefully anything else will be directly mappable.
+format_message_report(Rpt, _Conf) ->
+    Rpt.
+
 -spec format_message_string(
     Msg :: {string | unicode:charlist(), list()}, Conf :: config() )
-        -> iolist().
+        -> unicode:unicode_binary().
 %% @hidden Format any non-report message.
-format_message_string({string, [_|_] = Str}, Conf) ->
-    format_message_string("~ts", [Str], Conf);
 format_message_string({string, []}, _Conf) ->
-    "none";
+    <<>>;
+format_message_string({string, <<>> = Bin}, _Conf) ->
+    Bin;
+format_message_string({string, Str}, Conf) ->
+    format_message_string("~ts", [Str], Conf);
 format_message_string({[_|_] = Fmt, [_|_] = Args}, Conf) ->
     format_message_string(Fmt, Args, Conf);
 format_message_string({[_|_] = Fmt, []}, Conf) ->
     format_message_string("~ts", [Fmt], Conf);
 format_message_string({[], [_|_] = Args}, Conf) ->
-    format_message_string("MISSING FORMAT. Args: ~0p", [Args], Conf);
+    format_message_string("MISSING FORMAT: Args: ~0tp", [Args], Conf);
 format_message_string({[], []}, _Conf) ->
-    "none";
+    <<>>;
 format_message_string(Data, Conf) ->
-    format_message_string("STRING ERROR. Data: ~0p", [Data], Conf).
+    format_message_string("STRING ERROR: Data: ~0tp", [Data], Conf).
 
 -spec format_message_string(
     Fmt :: unicode:charlist(), Args :: list(), Conf :: config() )
-        -> iolist().
-%% @hidden As by `io_lib:format/3' with depth limited.
+        -> unicode:unicode_binary().
+%% @hidden As by `io_lib:format/3' with length/depth limited.
 format_message_string(Format, Args, Conf) ->
     Opts = case Conf of
         #{chars_limit := Limit} ->
@@ -644,7 +858,7 @@ format_message_string(Format, Args, Conf) ->
         _ ->
             []
     end,
-    try
+    Msg = try
         Scanned = io_lib:scan_format(Format, Args),
         Specs = case Conf of
             #{depth := Depth} ->
@@ -656,9 +870,10 @@ format_message_string(Format, Args, Conf) ->
     catch
         Class:Reason ->
             io_lib:format(
-                "FORMAT ERROR: ~0tp:~0tp: ~0tp - ~0tp",
+                "FORMAT ERROR: ~0tp:~0tp: Fmt: ~0tp Args: ~0tp",
                 [Class, Reason, Format, Args])
-    end.
+    end,
+    unicode:characters_to_binary(Msg).
 
 -spec format_filter(
     Specs :: list(io_lib:format_spec()),
@@ -675,16 +890,39 @@ format_filter([Spec | Specs], Depth) ->
 format_filter([], _Depth) ->
     [].
 
+-spec format_any_msg(Term :: term(), Conf :: config() )
+        -> unicode:unicode_binary().
+%% @hidden Safely format any 'message' term into a unicode binary,
+%% accounting for depth and length constraints.
+%% If present, the 'depth' and 'chars_limit' values have been validated by
+%% check_config/1, so this can never raise an exception, making it safe to
+%% call from anywhere.
+format_any_msg(Term, Conf) ->
+    {Fmt, Args} = case Conf of
+        #{depth := Depth} ->
+            {"~0tP", [Term, Depth]};
+        _ ->
+            {"~0tp", [Term]}
+    end,
+    Opts = case Conf of
+        #{chars_limit := Limit} ->
+            [{chars_limit, Limit}];
+        _ ->
+            []
+    end,
+    Str = io_lib:format(Fmt, Args, Opts),
+    maybe_dequote(unicode:characters_to_binary(Str)).
+
 -spec format_mfa(
     Fmts :: list(compact | expand),
     MFA :: {module(), atom(), pos_integer()},
     Res :: data_map() ) -> data_map().
 %% @hidden Format MFA as `compact', `expand'ed, or both.
 format_mfa([compact | Fmts], {M, F, A} = MFA, Res) ->
-    Val = erlang:iolist_to_binary([
-        erlang:atom_to_binary(M), $:, erlang:atom_to_binary(F),
-        $/, erlang:integer_to_binary(A)
-    ]),
+    MBin = erlang:atom_to_binary(M),
+    FBin = erlang:atom_to_binary(F),
+    ABin = erlang:integer_to_binary(A),
+    Val = << MBin/binary, $:, FBin/binary, $/, ABin/binary >>,
     format_mfa(Fmts, MFA, Res#{mfa => Val});
 format_mfa([expand | Fmts], {M, F, A} = MFA, Res) ->
     format_mfa(Fmts, MFA, Res#{module => M, function => F, arity => A});
@@ -693,13 +931,13 @@ format_mfa([], _MFA, Res) ->
 
 -spec logger_formatter_format(
     Event :: logger:log_event(), FConfig :: logger:formatter_config() )
-        -> binary().
+        -> unicode:unicode_binary().
 %% @hidden Let the `logger_formatter' module format `msg'.
 logger_formatter_format(Event, Conf) ->
     FConfig = maps:merge(?DFLT_LOGGER_FCONFIG,
         maps:with([chars_limit, depth, report_cb], Conf)),
     IOList = logger_formatter:format(Event, FConfig),
-    erlang:iolist_to_binary(IOList).
+    unicode:characters_to_binary(IOList).
 
 %% Dialyzer correctly warns that the 2nd head can never match because
 %% 'field_map' is present in the default config. We don't want to trigger a
@@ -739,18 +977,45 @@ map_field_key_fold(_, _, MMap) ->
     MMap.
 
 -spec map_level_value(Key :: log_level(), LMap :: level_map() ) -> level_val().
+%% @hidden Map a level key to a level_map value, possibly recursively.
+%% LMap is guaranteed to contain all of the legal logger:level() values.
 map_level_value(Key, LMap) when erlang:is_map_key(Key, LMap) ->
     case maps:get(Key, LMap) of
         Key ->
             %% Avoid infinite recursion!
-            maps:get(Key, default_level_map());
+            maps:get(Key, ?DFLT_LEVEL_MAP);
         Lev when erlang:is_atom(Lev) ->
             map_level_value(Lev, LMap);
         Val ->
             Val
     end;
+map_level_value(Key, _) when erlang:is_atom(Key) ->
+    unicode:characters_to_binary(string:uppercase(erlang:atom_to_list(Key)));
 map_level_value(Key, _) ->
-    erlang:list_to_binary(string:uppercase(erlang:atom_to_list(Key))).
+    unicode:characters_to_binary(io_lib:format("~0tp", [Key])).
+
+-spec maybe_dequote(Bin :: binary()) -> binary().
+%% De-quote a binary in preparation for encoding as a sting.
+maybe_dequote(Bin) when erlang:byte_size(Bin) > 2 ->
+    Len = (erlang:byte_size(Bin) - 2),
+    case Bin of
+        << $\", Quoted:Len/binary, $\" >> ->
+            Quoted;
+        _ ->
+            Bin
+    end;
+maybe_dequote(<< $\", $\" >>) ->
+    <<>>;
+maybe_dequote(Bin) ->
+    Bin.
+
+-spec merge_config(Config :: config()) -> config().
+%% @hidden Merge supplied config, and level map if present, with defaults.
+merge_config(#{level_map := LMap} = Config) ->
+    Merged = maps:merge(default_config(), Config),
+    Merged#{level_map := maps:merge(default_level_map(), LMap)};
+merge_config(Config) ->
+    maps:merge(default_config(), Config).
 
 -spec non_escape_chars(list(char())) -> boolean().
 %% @hidden Returns `true' if no escaping is needed.
@@ -769,8 +1034,13 @@ non_escape_chars(_) ->
 -define(ENCODE_BINARY(Value),   json:encode_binary(Value)).
 -else.  % use local implementation
 -compile({inline, escape_char/1}).
+%% Almost certainly not the fastest way to do this, especially since *most*
+%% strings won't need escaping. It shouldn't be awful, though, for the
+%% relatively short strings being logged, so we'll let it suffice until we
+%% get onto OTP-27.
 -define(ENCODE_BINARY(Value),
-    E = << (escape_char(Ch)) || <<Ch>> <= Value >>, << $\", E/binary, $\" >>
+    E = << (escape_char(Ch)) || <<Ch>> <= Value >>,
+    << $\", E/binary, $\" >>
 ).
 -endif. % ?USE_OTP_JSON
 
@@ -795,7 +1065,7 @@ encode_value([]) ->
 encode_value([_|_] = Value) ->
     case io_lib:deep_char_list(Value) of
         true ->
-            encode_value(erlang:iolist_to_binary(Value));
+            encode_value(unicode:characters_to_binary(Value));
         _ ->
             Vals = [encode_value(Val) || Val <- Value],
             [ $[, lists:join($,, Vals), $] ]
@@ -811,33 +1081,53 @@ encode_value(Value)
         orelse  erlang:is_port(Value)
         orelse  erlang:is_reference(Value) ->
     %% These types will never contain escapable characters.
-    Val = erlang:iolist_to_binary(io_lib:format("~0p", [Value])),
+    Val = unicode:characters_to_binary(io_lib:format("~0tp", [Value])),
     << $\", Val/binary, $\" >>;
 encode_value(Value) ->
-    encode_value(erlang:iolist_to_binary(io_lib:format("~0p", [Value]))).
+    encode_value(maybe_dequote(
+        unicode:characters_to_binary(io_lib:format("~0tp", [Value])))).
 
 -ifndef(USE_OTP_JSON).
 
-%% The OTP-27 encoder lets the JIT build jump tables instead of range
-%% comparisons. Without doing a slew of timing tests on earlier OTP releases
-%% to see what's fastest where, we're just going with ranges for ease of
-%% coding and readability. Presumably, most logged strings won't contain any,
-%% or many, escapable characters.
-
 -spec escape_char(Ch :: non_neg_integer()) -> binary().
-escape_char($")    -> <<"\\\"">>;
-escape_char($\\)   -> <<"\\\\">>;
-escape_char($\b)   -> <<"\\b">>;
-escape_char($\t)   -> <<"\\t">>;
-escape_char($\n)   -> <<"\\n">>;
-escape_char($\f)   -> <<"\\f">>;
-escape_char($\r)   -> <<"\\r">>;
-%% Literals *might* be faster, but we don't expect to encounter these much
-%% in this use case.
-escape_char(Ch) when Ch < 16 -> <<"\\u000", ($0 + Ch):8>>;
-escape_char(Ch) when Ch < 32 -> <<"\\u001", ($0 + Ch):8>>;
+%% x00-x1f in order so the compiler can build a jump table
+escape_char(0)      -> <<"\\u0000">>;
+escape_char(1)      -> <<"\\u0001">>;
+escape_char(2)      -> <<"\\u0002">>;
+escape_char(3)      -> <<"\\u0003">>;
+escape_char(4)      -> <<"\\u0004">>;
+escape_char(5)      -> <<"\\u0005">>;
+escape_char(6)      -> <<"\\u0006">>;
+escape_char(7)      -> <<"\\u0007">>;
+escape_char($\b)    -> <<"\\b">>;   %  8
+escape_char($\t)    -> <<"\\t">>;   %  9
+escape_char($\n)    -> <<"\\n">>;   % 10
+escape_char(11)     -> <<"\\u000B">>;
+escape_char($\f)    -> <<"\\f">>;   % 12
+escape_char($\r)    -> <<"\\r">>;   % 13
+escape_char(14)     -> <<"\\u000E">>;
+escape_char(15)     -> <<"\\u000F">>;
+escape_char(16)     -> <<"\\u0010">>;
+escape_char(17)     -> <<"\\u0011">>;
+escape_char(18)     -> <<"\\u0012">>;
+escape_char(19)     -> <<"\\u0013">>;
+escape_char(20)     -> <<"\\u0014">>;
+escape_char(21)     -> <<"\\u0015">>;
+escape_char(22)     -> <<"\\u0016">>;
+escape_char(23)     -> <<"\\u0017">>;
+escape_char(24)     -> <<"\\u0018">>;
+escape_char(25)     -> <<"\\u0019">>;
+escape_char(26)     -> <<"\\u001A">>;
+escape_char(27)     -> <<"\\u001B">>;
+escape_char(28)     -> <<"\\u001C">>;
+escape_char(29)     -> <<"\\u001D">>;
+escape_char(30)     -> <<"\\u001E">>;
+escape_char(31)     -> <<"\\u001F">>;
+%% These two aren't in the inclusive x00-x1f range
+escape_char($")     -> <<"\\\"">>;
+escape_char($\\)    -> <<"\\\\">>;
 %% Everything else *should* already be valid UTF-8.
-escape_char(Ch)    -> <<Ch>>.
+escape_char(Ch)     -> <<Ch>>.
 
 -endif. % ?USE_OTP_JSON
 
@@ -860,34 +1150,46 @@ check_config_test() ->
     ?assertMatch(ok, check_config(M2)),
 
     M3 = #{bogus_key => bogus_val},
-    ?assertMatch({
-        error, {invalid_formatter_config,
-            riak_log_json_formatter, [{bogus_key, bogus_val}]}},
-        check_config(M3)),
+    ?assertMatch(
+        [{bogus_key, bogus_val}],
+        check_config_test_errors(check_config(M3))),
 
     M4 = #{time_delim => 24},
-    ?assertMatch({
-        error, {invalid_formatter_config,
-            riak_log_json_formatter, [{time_delim, 24}]}},
-        check_config(M4)),
+    ?assertMatch(
+        [{time_delim, 24}],
+        check_config_test_errors(check_config(M4))),
 
     M5 = #{time_offset => 1234},
-    ?assertMatch({
-        error, {invalid_formatter_config,
-            riak_log_json_formatter, [{time_offset, 1234}]}},
-        check_config(M5)),
+    ?assertMatch(
+        [{time_offset, 1234}],
+        check_config_test_errors(check_config(M5))),
 
     M6 = #{time_offset => 234},
     ?assertMatch(ok, check_config(M6)),
 
-    M7 = maps:merge(default_config(), #{
+    M7 = merge_config(#{
         field_map => #{foo => <<"bar">>},   %% Bad type
         level_map => #{info => info}        %% Map to itself
     }),
-    ?assertMatch({
-        error, {invalid_formatter_config,
-            riak_log_json_formatter, [{level_map, _}, {field_map, _}]}},
-        check_config(M7)).
+    ?assertMatch(
+        [{field_map, _}, {level_map, _}],
+        check_config_test_errors(check_config(M7))),
+
+    M8 = #{chars_limit => 0, depth => -2},
+    ?assertMatch(
+        [{chars_limit, _}, {depth, _}],
+        check_config_test_errors(check_config(M8))).
+
+%% Different OTP versions return the errors in different orders depending
+%% on map folding implementation, so sort if more than one.
+check_config_test_errors({error,
+        {invalid_formatter_config, riak_log_json_formatter, [_] = Errors}}) ->
+    Errors;
+check_config_test_errors({error,
+        {invalid_formatter_config, riak_log_json_formatter, Errors}}) ->
+    lists:sort(Errors);
+check_config_test_errors(Result) ->
+    Result.
 
 format_test() ->
     LogLoc = ?LOCATION,
@@ -907,9 +1209,8 @@ format_test() ->
         msg => {string, "Bob"}
     },
     MsgList = format(Event, #{mfa_format => all}),
-    % io:format(user, "~nMsg: \"~s\"~n", [MsgList]),
     ?assertMatch(true, erlang:is_list(MsgList)),
-    Msg = erlang:iolist_to_binary(MsgList),
+    Msg = unicode:characters_to_binary(MsgList),
     Len = erlang:byte_size(Msg),
     ?assertMatch(${, binary:first(Msg)),
     ?assertMatch($}, binary:at(Msg, (Len - 2))),
@@ -922,23 +1223,23 @@ format_test() ->
             <<"\"message\":\"Bob\"">>,
             <<"\"domain\":[\"eunit\"]">>,
             <<"\"file\":\"riak_logger/src/riak_log_json_formatter.erl\"">>,
-            erlang:iolist_to_binary(
-                io_lib:format("\"level\":\"~s\"",
+            unicode:characters_to_binary(
+                io_lib:format("\"level\":\"~ts\"",
                     [maps:get(maps:get(level, Event), default_level_map())])),
-            erlang:iolist_to_binary(
+            unicode:characters_to_binary(
                 io_lib:format("\"line\":~b", [maps:get(line, Meta)])),
-            erlang:iolist_to_binary(
-                io_lib:format("\"mfa\":\"~s:~s/~b\"", [M, F, A])),
-            erlang:iolist_to_binary(
-                io_lib:format("\"module\":\"~s\"", [M])),
-            erlang:iolist_to_binary(
-                io_lib:format("\"function\":\"~s\"", [F])),
-            erlang:iolist_to_binary(
+            unicode:characters_to_binary(
+                io_lib:format("\"mfa\":\"~ts:~ts/~b\"", [M, F, A])),
+            unicode:characters_to_binary(
+                io_lib:format("\"module\":\"~ts\"", [M])),
+            unicode:characters_to_binary(
+                io_lib:format("\"function\":\"~ts\"", [F])),
+            unicode:characters_to_binary(
                 io_lib:format("\"arity\":~b", [A])),
-            erlang:iolist_to_binary(
-                io_lib:format("\"proc\":\"~0p\"", [maps:get(pid, Meta)])),
-            erlang:iolist_to_binary(
-                io_lib:format("\"ospid\":~s", [os:getpid()]))
+            unicode:characters_to_binary(
+                io_lib:format("\"proc\":\"~0tp\"", [maps:get(pid, Meta)])),
+            unicode:characters_to_binary(
+                io_lib:format("\"ospid\":~ts", [os:getpid()]))
         ]).
 
 timestamp_test() ->
@@ -975,5 +1276,120 @@ timestamp_test() ->
                     ?assertEqual(RefTS, ModTS)
                 end, ["", "Z", "z", 159])
         end, Units).
+
+report_test() ->
+    Event = #{level => info},
+    Conf = #{},
+    %% This sort of report blew up in v1.2.1 because 'args' was misinterpreted
+    %% as a unicode string.
+    Rpt = {report, #{
+        args => [131072],
+        format => "riak_kv_env: Open file limit: ~p",
+        label => {error_logger, info_msg}
+    }},
+    Pats = [
+        <<"\"level\":\"INFO\"">>,
+        <<"\"message\":\"riak_kv_env: Open file limit: 131072\"">>,
+        <<"\"label\":\"{error_logger,info_msg}\"">>
+    ],
+    Json = unicode:characters_to_binary(format(Event#{msg => Rpt}, Conf)),
+    lists:foreach(
+        fun(Pat) ->
+            ?assertMatch({S, L}
+                    when erlang:is_integer(S) andalso erlang:is_integer(L),
+                    binary:match(Json, Pat))
+        end, Pats).
+
+unicode_test() ->
+    Event = #{
+        msg => {string, "tab:\t 0x1e:\x1e Ctrl-D:\4"},
+        level => warnin, meta => #{
+            gl => erlang:group_leader(),
+            pid => erlang:self(),
+            time => logger:timestamp(),
+            line => ?LINE
+        }},
+    Conf = #{},
+    Json = unicode:characters_to_binary(format(Event, Conf)),
+    Patt = <<"\"message\":\"tab:\\t 0x1e:\\u001E Ctrl-D:\\u0004\"">>,
+    ?assertMatch({S, L}
+            when erlang:is_integer(S) andalso erlang:is_integer(L),
+            binary:match(Json, Patt)).
+
+bad_event_test() ->
+    %% Throw a bunch of garbage at format/2 and ensure it doesn't raise
+    %% an exception.
+    Time = logger:timestamp(),
+    Meta = #{
+        gl => erlang:group_leader(),
+        pid => erlang:self(),
+        time => Time
+    },
+    Conf = #{},
+    Data = [
+        %% Legit Event
+        {#{level => info, meta => Meta#{line => ?LINE},
+            msg => {string, "a plain string"}}, Conf, msg},
+        %% Illegal 'msg'
+        {#{level => info, meta => Meta#{line => ?LINE},
+            msg => "bad string msg"}, Conf, msg},
+        %% No required fields
+        {#{}, Conf, ""},
+        %% Illegal format
+        {#{level => notice, meta => Meta#{line => ?LINE},
+            msg => {"~q", [junk]}}, Conf, <<"\"message\":\"FORMAT ERROR: ">>}
+    ],
+    bad_event_test_check(Data).
+
+bad_event_test_check([{Event, Config, Match} | Rest]) ->
+    JSL = case format(Event, Config) of
+        [_|_] = JsList ->
+            JsList;
+        Bad ->
+            erlang:error(bad_list, [Bad])
+    end,
+    Json = unicode:characters_to_binary(JSL),
+    M = case Match of
+        msg ->
+            MV = case maps:get(msg, Event) of
+                {string, MS} ->
+                    MS;
+                MS ->
+                    MS
+            end,
+            unicode:characters_to_binary(
+                io_lib:format("\"message\":\"~ts\"", [MV]));
+        Key when erlang:is_atom(Key) ->
+            unicode:characters_to_binary(io_lib:format(
+                "\"~ts\":\"~ts\"", [Key, maps:get(Key, Event)]));
+        Str when erlang:is_list(Str) ->
+            unicode:characters_to_binary(
+                io_lib:format("\"message\":\"~ts\"", [Str]));
+        Bin ->
+            Bin
+    end,
+    case binary:match(Json, M) of
+        {S, L} when erlang:is_integer(S) andalso erlang:is_integer(L) ->
+            ok;
+        Res ->
+            %% Make it look like an assertMatch failure for rebar reporting
+            X1 = case Event of
+                #{meta := #{line := Line}} ->
+                    [{line, Line}];
+                _ ->
+                    []
+            end,
+            X2 = case Match of
+                K when erlang:is_atom(K) ->
+                    [{key, K}, {val, maps:get(K, Event)} | X1];
+                V ->
+                    [{match, V} | X1]
+            end,
+            Extra = [{json, Json}, {pattern, M}, {value, Res} | X2],
+            erlang:error(assertMatch, Extra)
+    end,
+    bad_event_test_check(Rest);
+bad_event_test_check([]) ->
+    ok.
 
 -endif. % ?TEST

@@ -15,6 +15,31 @@
 
 <h2><a name="description">Description</a></h2><p>A JSON formatter for the Kernel Logger.</p>
 
+  <p>The formatter is widely configurable as described for its <a docgen-rel="seetype" docgen-href="#config/0" href="#type-config"><code>config()</code></a>
+map, though in most cases the default configuration should be fine.</p>
+
+  Basic logging of JSON records, one per line, to rolling log files in Riak's
+  <code>advanced.config</code> file might look like:
+  <pre>   {kernel, [
+       {logger, [
+            %% Records ALL events to JSON log
+           {handler, json_log, logger_std_h, #{
+               level =&gt; all,
+               config =&gt; #{
+                   compress_on_rotate =&gt; false,
+                   file =&gt; "{{platform_log_dir}}/json/riak-log.json",
+                   file_check =&gt; 100,
+                   max_no_bytes =&gt; 1048576,
+                   max_no_files =&gt; 10
+               },
+               filter_default =&gt; log,
+               filters =&gt; [],
+               formatter =&gt; {riak_log_json_formatter, #{
+                   %% Defaults should be suitable for most use cases.
+               }}
+           }}
+       ]}
+   ]}</pre>
   See the <a href="https://www.erlang.org/doc/apps/kernel/logger_chapter#handlers">Handlers</a> and <a href="https://www.erlang.org/doc/apps/kernel/logger_chapter.html#formatters">Formatters</a> sections of the Kernel User's Guide for more information.
 
 <h2><a name="types">Data Types</a></h2>
@@ -44,7 +69,7 @@
   <i>only</i> to top-level fields; nested fields are not evaluated.</dd>
   <dt><code>field_map ::</code> <a docgen-rel="seetype" docgen-href="#field_map/0" href="#type-field_map"><code>field_map()</code></a></dt>
   <dd>A map of [alternate] names to be output for JSON fields, possibly
-  overriding the defaults returned by <a docgen-rel="seemfa" docgen-href="#default_fields/0" href="#default_fields-0">default_fields()</a>.<br>
+  overriding the defaults returned by <a docgen-rel="seemfa" docgen-href="#default_field_map/0" href="#default_field_map-0">  default_field_map()</a>.<br>
   Any top-level field name can be overridden, not just the predefined ones,
   but nested field names are not affected. For instance, if an event contains
   field <code>foo</code>, in either its metadata or a report map, it can be mapped to
@@ -52,7 +77,7 @@
   The map need not include every field, only those to be overridden.</dd>
   <dt><code>level_map ::</code> <a docgen-rel="seetype" docgen-href="#level_map/0" href="#type-level_map"><code>level_map()</code></a></dt>
   <dd>A map of [alternate] levels or values to be output for the JSON <code>level</code>
-  field, overriding the defaults returned by <a docgen-rel="seemfa" docgen-href="#default_level_map/0" href="#default_level_map-0">default_level_map()</a>.<br>
+  field, overriding the defaults returned by <a docgen-rel="seemfa" docgen-href="#default_level_map/0" href="#default_level_map-0">  default_level_map()</a>.<br>
   The map need not include every level, only those to be overridden.</dd>
   <dt><code>line_delim ::</code> <a docgen-rel="seetype" docgen-href="#line_delim/0" href="#type-line_delim"><code>line_delim()</code></a></dt>
   <dd>A byte or (possibly empty) list of bytes used to delimit output lines
@@ -173,7 +198,7 @@ exclude from, JSON output.</p>
   filtering).</p>
 
 <h3 class="typedecl"><a name="type-meta_fields">meta_fields()</a></h3>
-<p><tt>meta_fields() = [<a href="#type-meta_field">meta_field()</a> | atom(), ...]</tt></p>
+<p><tt>meta_fields() = [<a href="#type-meta_field">meta_field()</a> | <a href="#type-output_field">output_field()</a>, ...]</tt></p>
 <p>  A non-empty list of metadata field keys.
   The list <i>MAY</i> contain arbitrary fields (as atoms) included at the
   point of event generation.</p>
@@ -187,7 +212,7 @@ exclude from, JSON output.</p>
   </dl></p>
 
 <h3 class="typedecl"><a name="type-output_field">output_field()</a></h3>
-<p><tt>output_field() = level | message | timestamp | <a href="#type-meta_field">meta_field()</a> | atom()</tt></p>
+<p><tt>output_field() = level | message | timestamp | atom()</tt></p>
 <p>  A post-expansion log event field key.</p>
 
 <h3 class="typedecl"><a name="type-output_fields">output_fields()</a></h3>
@@ -218,7 +243,7 @@ exclude from, JSON output.</p>
 
 <h2><a name="index">Function Index</a></h2>
 <table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#check_config-1">check_config/1</a></td><td>Validates a configuration map.</td></tr>
-<tr><td valign="top"><a href="#default_config-0">default_config/0</a></td><td>Returns the <a docgen-rel="seetype" docgen-href="#config/0" href="#type-config">configuration</a> defaults.</td></tr>
+<tr><td valign="top"><a href="#default_config-0">default_config/0</a></td><td>Returns the default <a docgen-rel="seetype" docgen-href="#config/0" href="#type-config">configuration</a>.</td></tr>
 <tr><td valign="top"><a href="#default_field_map-0">default_field_map/0</a></td><td>Returns the default <a docgen-rel="seetype" docgen-href="#field_map/0" href="#type-field_map"><code>field_map()</code></a>.</td></tr>
 <tr><td valign="top"><a href="#default_fields-0">default_fields/0</a></td><td>Returns the default fields that may be in a JSON output object.</td></tr>
 <tr><td valign="top"><a href="#default_level_map-0">default_level_map/0</a></td><td>Returns the default <a docgen-rel="seetype" docgen-href="#level_map/0" href="#type-level_map"><code>level_map()</code></a>.</td></tr>
@@ -231,37 +256,89 @@ exclude from, JSON output.</p>
 <div class="spec">
 <p><tt>check_config(FConfig::<a href="https://www.erlang.org/doc/apps/kernel/logger.html#t:formatter_config/0">logger:formatter_config()</a>) -&gt; ok | {error, term()}</tt><br></p>
 <p> </p>
-</div><p>Validates a configuration map.</p>
+</div><p><p>Validates a configuration map.</p>
+
+  This function is called by the Kernel Logger when a handler is configured
+  to use this formatter.</p>
 
 <h3 class="function"><a name="default_config-0">default_config/0</a></h3>
 <div class="spec">
 <p><tt>default_config() -&gt; <a href="#type-config">config()</a></tt><br></p>
 <p> </p>
-</div><p>Returns the <a docgen-rel="seetype" docgen-href="#config/0" href="#type-config">configuration</a> defaults.</p>
+</div><p><p>Returns the default <a docgen-rel="seetype" docgen-href="#config/0" href="#type-config">configuration</a>.</p>
+
+  The default configuration is:
+  <pre>   #{
+       field_map   =&gt; default_field_map(),
+       level_map   =&gt; default_level_map(),
+       line_delim  =&gt; $\n,
+       mfa_format  =&gt; compact,
+       time_delim  =&gt; $T,
+       time_offset =&gt; "Z",
+       time_unit   =&gt; millisecond
+   }</pre></p>
 
 <h3 class="function"><a name="default_field_map-0">default_field_map/0</a></h3>
 <div class="spec">
 <p><tt>default_field_map() -&gt; <a href="#type-field_map">field_map()</a></tt><br></p>
 <p> </p>
-</div><p>Returns the default <a docgen-rel="seetype" docgen-href="#field_map/0" href="#type-field_map"><code>field_map()</code></a>.</p>
+</div><p><p>Returns the default <a docgen-rel="seetype" docgen-href="#field_map/0" href="#type-field_map"><code>field_map()</code></a>.</p>
+
+  The default field map is:
+  <pre>   #{
+       pid         =&gt; proc,
+       %% Mapping to 'domain' gets special handling
+       log_type    =&gt; domain
+   }</pre></p>
 
 <h3 class="function"><a name="default_fields-0">default_fields/0</a></h3>
 <div class="spec">
 <p><tt>default_fields() -&gt; [atom(), ...]</tt><br></p>
 <p> </p>
-</div><p>Returns the default fields that may be in a JSON output object.</p>
+</div><p><p>Returns the default fields that may be in a JSON output object.</p>
+
+  This function has little, if any, value and may be removed in a future
+  release.</p>
 
 <h3 class="function"><a name="default_level_map-0">default_level_map/0</a></h3>
 <div class="spec">
 <p><tt>default_level_map() -&gt; <a href="#type-level_map">level_map()</a></tt><br></p>
 <p> </p>
-</div><p>Returns the default <a docgen-rel="seetype" docgen-href="#level_map/0" href="#type-level_map"><code>level_map()</code></a>.</p>
+</div><p><p>Returns the default <a docgen-rel="seetype" docgen-href="#level_map/0" href="#type-level_map"><code>level_map()</code></a>.</p>
+
+  The default level map is:
+  <pre>   #{
+       emergency   =&gt; &lt;&lt;"EMERG"&gt;&gt;,
+       alert       =&gt; &lt;&lt;"ALERT"&gt;&gt;,
+       critical    =&gt; &lt;&lt;"CRIT"&gt;&gt;,
+       error       =&gt; &lt;&lt;"ERROR"&gt;&gt;,
+       warning     =&gt; &lt;&lt;"WARN"&gt;&gt;,
+       notice      =&gt; &lt;&lt;"NOTICE"&gt;&gt;,
+       info        =&gt; &lt;&lt;"INFO"&gt;&gt;,
+       debug       =&gt; &lt;&lt;"DEBUG"&gt;&gt;
+   }</pre></p>
 
 <h3 class="function"><a name="format-2">format/2</a></h3>
 <div class="spec">
-<p><tt>format(Event::<a href="https://www.erlang.org/doc/apps/kernel/logger.html#t:log_event/0">logger:log_event()</a>, FConfig::<a href="#type-config">config()</a>) -&gt; <a href="https://www.erlang.org/doc/apps/stdlib/unicode.html#t:chardata/0">unicode:chardata()</a></tt><br></p>
+<p><tt>format(Event::<a href="/Users/ted.burghart/prj/wday/wip-repos/kernel/doc/logger.html#type-log_event">logger:log_event()</a>, FConfig::<a href="#type-config">config()</a>) -&gt; <a href="/Users/ted.burghart/prj/wday/wip-repos/stdlib/doc/unicode.html#type-chardata">unicode:chardata()</a></tt><br></p>
 <p> </p>
-</div><p>Formats a log event as a JSON object on a single line.</p>
+</div><p><p>Formats a log event as a JSON object on a single line.</p>
+
+  <p>This function is called by Kernel Logger handlers to format log events.</p>
+
+  <p>In all cases we'll output a valid JSON record with at least <code>level</code>,
+  <code>message</code>, and <code>timestamp</code> fields, subject to configured filtering and/or
+field name mapping.</p>
+
+  <p>Per documentation and implementation of the <a href="https://www.erlang.org/doc/apps/kernel/logger#t:log_event/0"><code>logger:log_event()</code></a> type, the <code>level</code>, <code>meta</code> and <code>msg</code> fields
+  <i>MUST</i> all be present in <code>Event</code> on entry to this function.
+  Testing has shown that <code>kernel</code> code violates this contract in some
+invocation scenarios, so we're defensive against non-compliant events.</p>
+
+  The <a docgen-rel="seetype" docgen-href="#config/0" href="#type-config"><code>FConfig</code></a> map has been heavily validated by
+  <a docgen-rel="seemfa" docgen-href="#check_config/1" href="#check_config-1"><code>check_config(FConfig)</code></a> when the handler using this
+  formatter was added, so we aren't paranoid about contract violations in
+  that parameter it gets to this function.</p>
 <hr>
 
 <div class="navbar"><a name="#navbar_bottom"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
