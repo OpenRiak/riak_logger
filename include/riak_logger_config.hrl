@@ -19,10 +19,11 @@
 
 -type config_map() :: any().
 -type config_fetch_fun() ::
-    fun((string(), config_map()) -> list()|pos_integer()).
+    fun((string(), config_map()) -> list()|pos_integer()|atom()).
 -type standard_handler() ::
     {handler, atom(), logger_std_h, map()}.
 
+-define(LOGGER_LEVEL_CFGKEY, "logger.level").
 -define(FILE_CONSOLE_CFGKEY, "logger.file").
 -define(FILE_ERROR_CFGKEY, "logger.error_file").
 -define(FILE_CRASH_CFGKEY, "logger.crash_file").
