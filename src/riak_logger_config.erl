@@ -44,7 +44,11 @@ handler_config(Conf, ConfFetchFun) ->
             }
         } ->
             AdditionalHandlers =
-                conf_getlist(?ADDITIONAL_HANDLERS_CFGKEY, ConfFetchFun, Conf),
+                conf_getatomlist(
+                    ?ADDITIONAL_HANDLERS_CFGKEY,
+                    ConfFetchFun,
+                    Conf
+                ),
             DomainFilters =
                 lists:map(
                     fun(F) ->
@@ -79,7 +83,11 @@ handler_config(Conf, ConfFetchFun) ->
                 ),
             OtherHandlers =
                 lists:map(
-                    fun(H) ->
+                    fun(H)
+                        when 
+                            H == crash; H == error; H == report;
+                            H == background; H == backend;
+                            H == json ->
                         get_handler(
                             H,
                             ConfFetchFun,
@@ -106,7 +114,21 @@ conf_getlist(Key, ConfFetchFun, Conf) ->
     case ConfFetchFun(Key, Conf) of
         L when erlang:is_list(L) ->
             L
-    end.    
+    end.
+
+-spec conf_getatomlist(
+    string(), config_fetch_fun(), config_map()) -> list(atom()).
+conf_getatomlist(Key, ConfFetchFun, Conf) ->
+    case ConfFetchFun(Key, Conf) of
+        L when erlang:is_list(L) ->
+            Tokens = string:lexemes(L, "|"),
+            lists:map(
+                fun(T) -> 
+                    erlang:list_to_atom(string:lowercase(T))
+                end,
+                Tokens
+            )
+    end.
 
 -spec parse_inputs(config_fetch_fun(), config_map()) ->
     {
@@ -114,7 +136,7 @@ conf_getlist(Key, ConfFetchFun, Conf) ->
         {
             list(term()), 
             list(tuple()),
-            list(additional_handlers()),
+            list(atom()),
             pos_integer(),
             pos_integer()
         }
@@ -124,7 +146,7 @@ parse_inputs(ConfFetchFun, Conf) ->
     case parse_logformat(ConfigFormat) of
         {ok, DefaultFormatTerm} ->
             DefaultFilters =
-                conf_getlist(?DEFAULT_FILTERS_CFGKEY, ConfFetchFun, Conf),
+                conf_getatomlist(?DEFAULT_FILTERS_CFGKEY, ConfFetchFun, Conf),
             NonStandardFilters = DefaultFilters -- ?STANDARD_FILTERS,
             StandardFilters = DefaultFilters -- NonStandardFilters,
             DefaultFilter =
@@ -505,8 +527,8 @@ classic_config_test() ->
             ?DEFAULT_FORMAT_CFGKEY => 
                 "[time,\" [\",level,\"] \",pid,\"@\",mfa,"
                 "\":\",line,\" \",msg,\"\\n\"].",
-            ?DEFAULT_FILTERS_CFGKEY => [crash, error, sasl],
-            ?ADDITIONAL_HANDLERS_CFGKEY => [crash, error, report]
+            ?DEFAULT_FILTERS_CFGKEY => "crash|error|sasl",
+            ?ADDITIONAL_HANDLERS_CFGKEY => "crash|error|report"
         },
     {ok, ClassicConfig} = handler_config(Conf1, ConfFetchFun),
 
@@ -640,8 +662,8 @@ json_config_test() ->
             ?DEFAULT_FORMAT_CFGKEY => 
                 "[time,\" [\",level,\"] \",pid,\"@\",mfa,"
                 "\":\",line,\" \",msg,\"\\n\"].",
-            ?DEFAULT_FILTERS_CFGKEY => [crash, error, sasl],
-            ?ADDITIONAL_HANDLERS_CFGKEY => [crash, error, report, json]
+            ?DEFAULT_FILTERS_CFGKEY => "crash|error|sasl",
+            ?ADDITIONAL_HANDLERS_CFGKEY => "crash|error|report|json"
         },
     {ok, JsonConfig} = handler_config(Conf1, ConfFetchFun),
 
@@ -686,9 +708,9 @@ domain_config_test() ->
                 "[time,\" [\",level,\"] \",pid,\"@\",mfa,"
                 "\":\",line,\" \",msg,\"\\n\"].",
             ?DEFAULT_FILTERS_CFGKEY =>
-                [crash, error, sasl, backend, background],
+                "crash|error|sasl|backend|background",
             ?ADDITIONAL_HANDLERS_CFGKEY =>
-                [crash, error, report, backend, background]
+                "crash|error|report|backend|background"
         },
     {ok, DomainConfig} = handler_config(Conf1, ConfFetchFun),
 
