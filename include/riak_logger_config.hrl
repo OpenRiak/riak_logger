@@ -24,12 +24,12 @@
     {handler, atom(), logger_std_h, map()}.
 
 -define(FILE_CONSOLE_CFGKEY, "logger.file").
--define(FILE_ERROR_CFGKEY, "error.file").
--define(FILE_CRASH_CFGKEY, "crash.file").
--define(FILE_REPORT_CFGKEY, "report.file").
--define(FILE_BACKEND_CFGKEY, "backend.file").
--define(FILE_BACKGROUND_CFGKEY, "background.file").
--define(FILE_JSON_CFGKEY, "json.file").
+-define(FILE_ERROR_CFGKEY, "logger.error_file").
+-define(FILE_CRASH_CFGKEY, "logger.crash_file").
+-define(FILE_REPORT_CFGKEY, "logger.report_file").
+-define(FILE_BACKEND_CFGKEY, "logger.backend_file").
+-define(FILE_BACKGROUND_CFGKEY, "logger.background_file").
+-define(FILE_JSON_CFGKEY, "logger.json_file").
 -define(MAX_FILESIZE_CFGKEY, "logger.max_file_size").
 -define(MAX_FILECOUNT_CFGKEY, "logger.max_files").
 -define(DEFAULT_FORMAT_CFGKEY, "logger.format").
