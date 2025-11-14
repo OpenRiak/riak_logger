@@ -121,7 +121,7 @@ conf_getlist(Key, ConfFetchFun, Conf) ->
 conf_getatomlist(Key, ConfFetchFun, Conf) ->
     case ConfFetchFun(Key, Conf) of
         AL when erlang:is_list(AL) ->
-            AL
+            lists:filter(fun(A) -> A =/= none end, AL)
     end.
 
 -spec parse_inputs(config_fetch_fun(), config_map()) ->
@@ -452,8 +452,8 @@ simple_config_test() ->
             ?DEFAULT_FORMAT_CFGKEY => 
                 "[time,\" [\",level,\"] \",pid,\"@\",mfa,"
                 "\":\",line,\" \",msg,\"\\n\"].",
-            ?DEFAULT_FILTERS_CFGKEY => [],
-            ?ADDITIONAL_HANDLERS_CFGKEY => []
+            ?DEFAULT_FILTERS_CFGKEY => [none],
+            ?ADDITIONAL_HANDLERS_CFGKEY => [none]
         },
     {ok, SimpleConfig} = handler_config(Conf, ConfFetchFun),
 
@@ -500,8 +500,8 @@ error_config_test() ->
             ?DEFAULT_FORMAT_CFGKEY => 
                 "[time,\" [\",level,\"] \",pid,\"@\",mfa,"
                 "\":\",line,\" \",msg,\"\\n\"].",
-            ?DEFAULT_FILTERS_CFGKEY => [],
-            ?ADDITIONAL_HANDLERS_CFGKEY => []
+            ?DEFAULT_FILTERS_CFGKEY => [none],
+            ?ADDITIONAL_HANDLERS_CFGKEY => [none]
         },
     ?assertMatch(
         {error, "Invalid file size 0 or count 10"},
