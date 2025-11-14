@@ -120,14 +120,8 @@ conf_getlist(Key, ConfFetchFun, Conf) ->
     string(), config_fetch_fun(), config_map()) -> list(atom()).
 conf_getatomlist(Key, ConfFetchFun, Conf) ->
     case ConfFetchFun(Key, Conf) of
-        L when erlang:is_list(L) ->
-            Tokens = string:lexemes(L, "|"),
-            lists:map(
-                fun(T) -> 
-                    erlang:list_to_atom(string:lowercase(T))
-                end,
-                Tokens
-            )
+        AL when erlang:is_list(AL) ->
+            AL
     end.
 
 -spec parse_inputs(config_fetch_fun(), config_map()) ->
@@ -527,8 +521,8 @@ classic_config_test() ->
             ?DEFAULT_FORMAT_CFGKEY => 
                 "[time,\" [\",level,\"] \",pid,\"@\",mfa,"
                 "\":\",line,\" \",msg,\"\\n\"].",
-            ?DEFAULT_FILTERS_CFGKEY => "crash|error|sasl",
-            ?ADDITIONAL_HANDLERS_CFGKEY => "crash|error|report"
+            ?DEFAULT_FILTERS_CFGKEY => [crash, error, sasl],
+            ?ADDITIONAL_HANDLERS_CFGKEY => [crash, error, report]
         },
     {ok, ClassicConfig} = handler_config(Conf1, ConfFetchFun),
 
@@ -662,8 +656,8 @@ json_config_test() ->
             ?DEFAULT_FORMAT_CFGKEY => 
                 "[time,\" [\",level,\"] \",pid,\"@\",mfa,"
                 "\":\",line,\" \",msg,\"\\n\"].",
-            ?DEFAULT_FILTERS_CFGKEY => "crash|error|sasl",
-            ?ADDITIONAL_HANDLERS_CFGKEY => "crash|error|report|json"
+            ?DEFAULT_FILTERS_CFGKEY => [crash, error, sasl],
+            ?ADDITIONAL_HANDLERS_CFGKEY => [crash, error, report, json]
         },
     {ok, JsonConfig} = handler_config(Conf1, ConfFetchFun),
 
@@ -708,9 +702,9 @@ domain_config_test() ->
                 "[time,\" [\",level,\"] \",pid,\"@\",mfa,"
                 "\":\",line,\" \",msg,\"\\n\"].",
             ?DEFAULT_FILTERS_CFGKEY =>
-                "crash|error|sasl|backend|background",
+                [crash, error, sasl, backend, background],
             ?ADDITIONAL_HANDLERS_CFGKEY =>
-                "crash|error|report|backend|background"
+                [crash, error, report, backend, background]
         },
     {ok, DomainConfig} = handler_config(Conf1, ConfFetchFun),
 
