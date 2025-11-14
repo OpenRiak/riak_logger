@@ -130,13 +130,6 @@ conf_getatomlist(Key, ConfFetchFun, Conf) ->
             )
     end.
 
--spec conf_getatom(string(), config_fetch_fun(), config_map()) -> atom().
-conf_getatom(Key, ConfFetchFun, Conf) ->
-    case ConfFetchFun(Key, Conf) of
-        A when erlang:is_atom(A) ->
-            A
-    end.
-
 -spec parse_inputs(config_fetch_fun(), config_map()) ->
     {
         ok,
@@ -248,8 +241,7 @@ get_handler(backend, ConfFun, Conf, MaxNumBytes, MaxNumFiles, FormatTerm) ->
         MaxNumBytes,
         MaxNumFiles,
         FormatTerm,
-        backend,
-        conf_getatom(?LOGGER_LEVEL_CFGKEY, ConfFun, Conf)
+        backend
     );
 get_handler(background, ConfFun, Conf, MaxNumBytes, MaxNumFiles, FormatTerm) ->
     domain_handler(
@@ -257,8 +249,7 @@ get_handler(background, ConfFun, Conf, MaxNumBytes, MaxNumFiles, FormatTerm) ->
         MaxNumBytes,
         MaxNumFiles,
         FormatTerm,
-        background,
-        conf_getatom(?LOGGER_LEVEL_CFGKEY, ConfFun, Conf)
+        background
     );
 get_handler(json, ConfFun, Conf, MaxNumBytes, MaxNumFiles, _FormatTerm) ->
     json_handler(
@@ -381,13 +372,13 @@ report_handler(File, MaxNumBytes, MaxNumFiles, FormatTerm) ->
         }
     }.
 
-domain_handler(File, MaxNumBytes, MaxNumFiles, FormatTerm, Domain, DLL) ->
+domain_handler(File, MaxNumBytes, MaxNumFiles, FormatTerm, Domain) ->
     {
         handler,
         Domain,
         logger_std_h,
         #{
-            level => DLL,
+            level => all,
             config =>
                 standard_config(File, MaxNumBytes, MaxNumFiles),
             filter_default => stop,
@@ -705,7 +696,6 @@ domain_config_test() ->
     ConfFetchFun = fun(Key, Map) -> maps:get(Key, Map) end,
     Conf1 =
         #{
-            ?LOGGER_LEVEL_CFGKEY => info,
             ?FILE_CONSOLE_CFGKEY => "/var/log/riak/console.log",
             ?FILE_CRASH_CFGKEY => "/var/log/riak/crash.log",
             ?FILE_ERROR_CFGKEY => "/var/log/riak/error.log",
@@ -747,7 +737,7 @@ domain_config_test() ->
             backend,
             logger_std_h,
             #{
-                level => info,
+                level => all,
                 config =>
                     standard_config("/var/log/riak/backend.log", 1048576, 10),
                 filter_default => stop,
@@ -771,7 +761,7 @@ domain_config_test() ->
             background,
             logger_std_h,
             #{
-                level => info,
+                level => all,
                 config =>
                     standard_config("/var/log/riak/async.log", 1048576, 10),
                 filter_default => stop,
