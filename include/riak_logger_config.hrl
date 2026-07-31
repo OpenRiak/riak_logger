@@ -19,7 +19,7 @@
 
 -type config_map() :: any().
 -type config_fetch_fun() ::
-    fun((string(), config_map()) -> list()|pos_integer()).
+    fun((string(), config_map()) -> list() | infinity | pos_integer()).
 -type standard_handler() ::
     {handler, atom(), logger_std_h, map()}.
 
