@@ -108,6 +108,12 @@ conf_getint(Key, ConfFetchFun, Conf) ->
         I when erlang:is_integer(I) ->
             I
     end.
+conf_getint_or_infinity(Key, ConfFetchFun, Conf) ->
+    case ConfFetchFun(Key, Conf) of
+        infinity -> infinity;
+        I when erlang:is_integer(I) ->
+            I
+    end.
 
 -spec conf_getlist(string(), config_fetch_fun(), config_map()) -> list().
 conf_getlist(Key, ConfFetchFun, Conf) ->
@@ -131,7 +137,7 @@ conf_getatomlist(Key, ConfFetchFun, Conf) ->
             list(term()), 
             list(tuple()),
             list(atom()),
-            pos_integer(),
+            infinity | pos_integer(),
             pos_integer()
         }
     } | {error, term()}.
@@ -167,15 +173,15 @@ parse_inputs(ConfFetchFun, Conf) ->
                 end,
             case {
                     DefaultFilter,
-                    conf_getint(?MAX_FILESIZE_CFGKEY, ConfFetchFun, Conf),
+                    conf_getint_or_infinity(?MAX_FILESIZE_CFGKEY, ConfFetchFun, Conf),
                     conf_getint(?MAX_FILECOUNT_CFGKEY, ConfFetchFun, Conf)
                 } of
                 {{error, Term}, _, _} ->
                     {error, Term};
                 {Filter, MaxNumBytes, MaxNumFiles}
                         when
-                            erlang:is_integer(MaxNumBytes), MaxNumBytes > 0,
-                            erlang:is_integer(MaxNumFiles), MaxNumFiles > 0 ->
+                            ((erlang:is_integer(MaxNumBytes) andalso MaxNumBytes > 0) orelse (MaxNumBytes == infinity))
+                            andalso erlang:is_integer(MaxNumFiles) andalso MaxNumFiles > 0 ->
                     {
                         ok, 
                         {
@@ -253,7 +259,7 @@ get_handler(json, ConfFun, Conf, MaxNumBytes, MaxNumFiles, _FormatTerm) ->
     ).
 
 -spec standard_config(
-    string(), pos_integer(), pos_integer()) -> #{atom() => any()}.
+    string(), infinity | pos_integer(), pos_integer()) -> #{atom() => any()}.
 standard_config(File, MaxNumBytes, MaxNumFiles) ->
     #{
         file => File,
